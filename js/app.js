@@ -25,7 +25,8 @@
         drafts: [],
         currentDraftId: null,
         showArchived: false,
-        keepDraftsOnClear: true
+        keepDraftsOnClear: true,
+        customMaterials: []
     };
 
     let pendingRenameDraftId = null;
@@ -149,10 +150,18 @@
                 ctx.globalAlpha = deco.opacity;
                 ctx.translate(deco.x + deco.size / 2, deco.y + deco.size / 2);
                 ctx.rotate(deco.rotation * Math.PI / 180);
-                ctx.font = (deco.size * 0.9) + 'px serif';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(deco.emoji, 0, 0);
+                if (deco.type === 'custom' && deco.imageData) {
+                    const img = new Image();
+                    img.src = deco.imageData;
+                    if (img.complete && img.naturalWidth > 0) {
+                        ctx.drawImage(img, -deco.size / 2, -deco.size / 2, deco.size, deco.size);
+                    }
+                } else {
+                    ctx.font = (deco.size * 0.9) + 'px serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(deco.emoji, 0, 0);
+                }
                 ctx.restore();
             });
 
@@ -700,8 +709,201 @@
         stamp: { emoji: '📮', name: '邮票', defaultSize: 75 }
     };
 
+    function generateMaterialId() {
+        return 'mat_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    function applyLowSaturation(imageDataUrl, saturationLevel = 0.4) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const data = imageData.data;
+
+                for (let i = 0; i < data.length; i += 4) {
+                    const r = data[i];
+                    const g = data[i + 1];
+                    const b = data[i + 2];
+                    const a = data[i + 3];
+
+                    const gray = r * 0.299 + g * 0.587 + b * 0.114;
+
+                    data[i] = gray + (r - gray) * saturationLevel;
+                    data[i + 1] = gray + (g - gray) * saturationLevel;
+                    data[i + 2] = gray + (b - gray) * saturationLevel;
+                    data[i + 3] = a;
+                }
+
+                ctx.putImageData(imageData, 0, 0);
+                resolve(canvas.toDataURL('image/png'));
+            };
+            img.onerror = reject;
+            img.src = imageDataUrl;
+        });
+    }
+
+    function resizeImage(imageDataUrl, maxSize = 512) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+                let width = img.width;
+                let height = img.height;
+
+                if (width > height && width > maxSize) {
+                    height = (height * maxSize) / width;
+                    width = maxSize;
+                } else if (height > maxSize) {
+                    width = (width * maxSize) / height;
+                    height = maxSize;
+                }
+
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                resolve(canvas.toDataURL('image/png'));
+            };
+            img.onerror = reject;
+            img.src = imageDataUrl;
+        });
+    }
+
+    function loadCustomMaterials() {
+        try {
+            const saved = localStorage.getItem('customMaterials');
+            if (saved) {
+                state.customMaterials = JSON.parse(saved);
+            }
+        } catch (e) {
+            console.warn('无法加载自定义素材:', e);
+            state.customMaterials = [];
+        }
+    }
+
+    function saveCustomMaterials() {
+        try {
+            localStorage.setItem('customMaterials', JSON.stringify(state.customMaterials));
+        } catch (e) {
+            console.warn('无法保存自定义素材:', e);
+            alert('素材保存失败，可能是存储空间不足');
+        }
+    }
+
+    async function handleMaterialUpload(file) {
+        if (!file || !file.type.startsWith('image/')) {
+            alert('请上传图片文件');
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            try {
+                let imageDataUrl = e.target.result;
+
+                imageDataUrl = await resizeImage(imageDataUrl, 512);
+
+                const lowSatImage = await applyLowSaturation(imageDataUrl, 0.4);
+
+                const material = {
+                    id: generateMaterialId(),
+                    name: file.name.replace(/\.[^/.]+$/, ''),
+                    originalData: imageDataUrl,
+                    processedData: lowSatImage,
+                    createdAt: Date.now()
+                };
+
+                state.customMaterials.unshift(material);
+                saveCustomMaterials();
+                renderCustomMaterials();
+            } catch (err) {
+                console.error('处理图片失败:', err);
+                alert('图片处理失败，请重试');
+            }
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function addCustomDecoration(materialId) {
+        const material = state.customMaterials.find(m => m.id === materialId);
+        if (!material) return;
+
+        const deco = {
+            id: Date.now(),
+            type: 'custom',
+            materialId: materialId,
+            imageData: material.processedData,
+            name: material.name,
+            x: letterCanvas.width / 2 - 60,
+            y: letterCanvas.height / 2 - 60,
+            size: 120,
+            opacity: 1,
+            rotation: 0
+        };
+
+        const currentDecos = getCurrentPageDecorations();
+        currentDecos.push(deco);
+        setCurrentPageDecorations(currentDecos);
+        renderDecorations();
+        updateDecorationList();
+        saveToCache();
+    }
+
+    function deleteCustomMaterial(materialId) {
+        state.customMaterials = state.customMaterials.filter(m => m.id !== materialId);
+        saveCustomMaterials();
+        renderCustomMaterials();
+    }
+
+    function renderCustomMaterials() {
+        const grid = document.getElementById('custom-materials-grid');
+        if (!grid) return;
+
+        if (state.customMaterials.length === 0) {
+            grid.innerHTML = '<div class="custom-materials-empty">暂无素材，点击上方按钮上传</div>';
+            return;
+        }
+
+        grid.innerHTML = state.customMaterials.map(mat => `
+            <div class="custom-material-item" data-id="${mat.id}" title="${escapeHtml(mat.name)}">
+                <img src="${mat.processedData}" alt="${escapeHtml(mat.name)}">
+                <button class="material-delete" data-id="${mat.id}" title="删除素材">✕</button>
+            </div>
+        `).join('');
+
+        grid.querySelectorAll('.custom-material-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                if (!e.target.classList.contains('material-delete')) {
+                    addCustomDecoration(item.dataset.id);
+                }
+            });
+        });
+
+        grid.querySelectorAll('.material-delete').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = btn.dataset.id;
+                showConfirmModal({
+                    title: '删除素材',
+                    message: '确定要删除这个素材吗？已添加到画布的素材不会被删除。',
+                    confirmText: '删除',
+                    onConfirm: () => deleteCustomMaterial(id)
+                });
+            });
+        });
+    }
+
     function init() {
         bindEvents();
+        
+        loadCustomMaterials();
         
         const hasDrafts = loadDraftsFromStorage();
         if (!hasDrafts) {
@@ -713,6 +915,7 @@
         renderEnvelope();
         updateDecorationList();
         updatePageInfo();
+        renderCustomMaterials();
     }
 
     function bindEvents() {
@@ -931,24 +1134,24 @@
             if (state.keepDraftsOnClear) {
                 showConfirmModal({
                     title: '清除缓存',
-                    message: '将清除临时设置，但保留所有草稿。确定继续吗？',
+                    message: '将清除临时设置，但保留所有草稿和自定义素材。确定继续吗？',
                     confirmText: '清除缓存',
                     confirmClass: 'btn-danger',
                     onConfirm: () => {
-                        const keysToKeep = ['letterDrafts', 'currentDraftId', 'keepDraftsOnClear'];
+                        const keysToKeep = ['letterDrafts', 'currentDraftId', 'keepDraftsOnClear', 'customMaterials'];
                         Object.keys(localStorage).forEach(key => {
                             if (!keysToKeep.includes(key)) {
                                 localStorage.removeItem(key);
                             }
                         });
-                        alert('缓存已清除，草稿已保留！');
+                        alert('缓存已清除，草稿和素材已保留！');
                         location.reload();
                     }
                 });
             } else {
                 showConfirmModal({
                     title: '清除所有数据',
-                    message: '将清除所有数据，包括草稿。确定继续吗？此操作无法撤销！',
+                    message: '将清除所有数据，包括草稿和自定义素材。确定继续吗？此操作无法撤销！',
                     confirmText: '清除全部',
                     confirmClass: 'btn-danger',
                     onConfirm: () => {
@@ -956,6 +1159,14 @@
                         location.reload();
                     }
                 });
+            }
+        });
+
+        document.getElementById('custom-material-upload').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                handleMaterialUpload(file);
+                e.target.value = '';
             }
         });
 
@@ -1448,14 +1659,25 @@
             el.style.top = deco.y + 'px';
             el.style.width = deco.size + 'px';
             el.style.height = deco.size + 'px';
-            el.style.fontSize = (deco.size * 0.9) + 'px';
             el.style.opacity = deco.opacity;
             el.style.transform = `rotate(${deco.rotation}deg)`;
             el.style.display = 'flex';
             el.style.alignItems = 'center';
             el.style.justifyContent = 'center';
             el.style.textAlign = 'center';
-            el.textContent = deco.emoji;
+
+            if (deco.type === 'custom' && deco.imageData) {
+                const img = document.createElement('img');
+                img.src = deco.imageData;
+                img.style.width = '100%';
+                img.style.height = '100%';
+                img.style.objectFit = 'contain';
+                img.style.pointerEvents = 'none';
+                el.appendChild(img);
+            } else {
+                el.style.fontSize = (deco.size * 0.9) + 'px';
+                el.textContent = deco.emoji;
+            }
 
             setupDecorationDrag(el, deco);
             
@@ -1579,8 +1801,13 @@
         currentDecos.forEach(deco => {
             const item = document.createElement('div');
             item.className = 'decoration-item';
+
+            const previewHtml = (deco.type === 'custom' && deco.imageData)
+                ? `<div class="deco-preview"><img src="${deco.imageData}" style="width:100%;height:100%;object-fit:contain;"></div>`
+                : `<div class="deco-preview">${deco.emoji}</div>`;
+
             item.innerHTML = `
-                <div class="deco-preview">${deco.emoji}</div>
+                ${previewHtml}
                 <div class="deco-controls">
                     <div class="control-row">
                         <label style="min-width:50px">透明度</label>
@@ -1926,7 +2153,16 @@
         return pages;
     }
 
-    function exportLetter() {
+    function loadImage(src) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            img.src = src;
+        });
+    }
+
+    async function exportLetter() {
         const pages = calculatePages();
         const scale = state.exportScale;
         const timestamp = Date.now();
@@ -1966,17 +2202,26 @@
                 ctx.stroke();
             });
 
-            pageDecos.forEach(deco => {
+            for (const deco of pageDecos) {
                 ctx.save();
                 ctx.globalAlpha = deco.opacity;
                 ctx.translate(deco.x + deco.size / 2, deco.y + deco.size / 2);
                 ctx.rotate(deco.rotation * Math.PI / 180);
-                ctx.font = (deco.size * 0.9) + 'px serif';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(deco.emoji, 0, 0);
+                if (deco.type === 'custom' && deco.imageData) {
+                    try {
+                        const img = await loadImage(deco.imageData);
+                        ctx.drawImage(img, -deco.size / 2, -deco.size / 2, deco.size, deco.size);
+                    } catch (e) {
+                        console.warn('加载装饰图片失败:', e);
+                    }
+                } else {
+                    ctx.font = (deco.size * 0.9) + 'px serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(deco.emoji, 0, 0);
+                }
                 ctx.restore();
-            });
+            }
 
             const link = document.createElement('a');
             link.download = `letter_${timestamp}_page${pageIndex + 1}.png`;
