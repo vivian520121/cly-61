@@ -4,8 +4,9 @@
     const state = {
         currentTemplate: 'line',
         currentMode: 'text',
-        decorations: [],
-        drawingData: null,
+        currentPage: 0,
+        pageDecorations: { '0': [] },
+        pageDrawingPaths: { '0': [] },
         selectedDecoration: null,
         letterContent: '',
         fontFamily: 'handwriting1',
@@ -40,8 +41,48 @@
     let isDrawing = false;
     let lastX = 0;
     let lastY = 0;
-    let drawingPaths = [];
     let currentPath = [];
+
+    function getCurrentPageDecorations() {
+        const pageKey = String(state.currentPage);
+        if (!state.pageDecorations[pageKey]) {
+            state.pageDecorations[pageKey] = [];
+        }
+        return state.pageDecorations[pageKey];
+    }
+
+    function setCurrentPageDecorations(decorations) {
+        const pageKey = String(state.currentPage);
+        state.pageDecorations[pageKey] = decorations;
+    }
+
+    function getCurrentPageDrawingPaths() {
+        const pageKey = String(state.currentPage);
+        if (!state.pageDrawingPaths[pageKey]) {
+            state.pageDrawingPaths[pageKey] = [];
+        }
+        return state.pageDrawingPaths[pageKey];
+    }
+
+    function setCurrentPageDrawingPaths(paths) {
+        const pageKey = String(state.currentPage);
+        state.pageDrawingPaths[pageKey] = paths;
+    }
+
+    function getTotalPages() {
+        const pages = calculatePages();
+        return pages.length;
+    }
+
+    function ensurePageDataExists(pageIndex) {
+        const pageKey = String(pageIndex);
+        if (!state.pageDecorations[pageKey]) {
+            state.pageDecorations[pageKey] = [];
+        }
+        if (!state.pageDrawingPaths[pageKey]) {
+            state.pageDrawingPaths[pageKey] = [];
+        }
+    }
 
     const decorationTemplates = {
         flower: { emoji: '🌸', name: '干花', defaultSize: 80 },
@@ -148,7 +189,7 @@
         });
 
         document.getElementById('clear-drawing').addEventListener('click', () => {
-            drawingPaths = [];
+            setCurrentPageDrawingPaths([]);
             currentPath = [];
             drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
             saveToCache();
@@ -161,10 +202,26 @@
         });
 
         document.getElementById('clear-decorations').addEventListener('click', () => {
-            state.decorations = [];
+            setCurrentPageDecorations([]);
             renderDecorations();
             updateDecorationList();
             saveToCache();
+        });
+
+        document.addEventListener('click', (e) => {
+            if (e.target.classList.contains('page-nav-btn')) {
+                const action = e.target.dataset.action;
+                const totalPages = getTotalPages();
+                if (action === 'prev' && state.currentPage > 0) {
+                    goToPage(state.currentPage - 1);
+                } else if (action === 'next' && state.currentPage < totalPages - 1) {
+                    goToPage(state.currentPage + 1);
+                } else if (action === 'first') {
+                    goToPage(0);
+                } else if (action === 'last') {
+                    goToPage(totalPages - 1);
+                }
+            }
         });
 
         ['receiver-name', 'receiver-address', 'sender-name', 'sender-address'].forEach(id => {
@@ -208,6 +265,40 @@
 
         drawingCanvas.style.pointerEvents = 'none';
         setupDrawingEvents();
+    }
+
+    function goToPage(pageIndex) {
+        const totalPages = getTotalPages();
+        if (pageIndex < 0 || pageIndex >= totalPages) return;
+        
+        ensurePageDataExists(pageIndex);
+        state.currentPage = pageIndex;
+        state.selectedDecoration = null;
+        
+        renderLetter();
+        renderDecorations();
+        updatePageInfo();
+        updateDecorationList();
+        redrawCurrentPagePaths();
+        saveToCache();
+    }
+
+    function redrawCurrentPagePaths() {
+        drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+        const currentPaths = getCurrentPageDrawingPaths();
+        currentPaths.forEach(path => {
+            if (path.length < 2) return;
+            drawingCtx.strokeStyle = path[0].color;
+            drawingCtx.lineWidth = path[0].size;
+            drawingCtx.lineCap = 'round';
+            drawingCtx.lineJoin = 'round';
+            drawingCtx.beginPath();
+            drawingCtx.moveTo(path[0].x, path[0].y);
+            for (let i = 1; i < path.length; i++) {
+                drawingCtx.lineTo(path[i].x, path[i].y);
+            }
+            drawingCtx.stroke();
+        });
     }
 
     function setupDrawingEvents() {
@@ -280,7 +371,9 @@
             e.preventDefault();
             isDrawing = false;
             if (currentPath.length > 0) {
-                drawingPaths.push([...currentPath]);
+                const currentPaths = getCurrentPageDrawingPaths();
+                currentPaths.push([...currentPath]);
+                setCurrentPageDrawingPaths(currentPaths);
                 saveToCache();
             }
             currentPath = [];
@@ -301,6 +394,12 @@
         
         drawPaperBackground();
         if (state.currentMode === 'text' && state.letterContent) {
+            const pages = calculatePages();
+            if (state.currentPage >= pages.length) {
+                state.currentPage = Math.max(0, pages.length - 1);
+                redrawCurrentPagePaths();
+                renderDecorations();
+            }
             drawHandwrittenText();
         }
         updatePageInfo();
@@ -308,12 +407,28 @@
 
     function updatePageInfo() {
         const pages = calculatePages();
+        const totalPages = pages.length;
         const pageInfoEl = document.getElementById('page-info');
         if (pageInfoEl) {
-            if (pages.length > 1) {
-                pageInfoEl.textContent = `📄 当前内容共 ${pages.length} 页，导出时将自动生成 ${pages.length} 张图片`;
+            const currentDisplay = state.currentPage + 1;
+            if (totalPages > 1) {
+                pageInfoEl.innerHTML = `
+                    <div class="pagination-container">
+                        <span class="page-count">📄 第 ${currentDisplay} / ${totalPages} 页</span>
+                        <div class="pagination-controls">
+                            <button class="page-nav-btn" data-action="first" title="第一页" ${state.currentPage === 0 ? 'disabled' : ''}>⏮</button>
+                            <button class="page-nav-btn" data-action="prev" title="上一页" ${state.currentPage === 0 ? 'disabled' : ''}>◀ 上一页</button>
+                            <button class="page-nav-btn" data-action="next" title="下一页" ${state.currentPage >= totalPages - 1 ? 'disabled' : ''}>下一页 ▶</button>
+                            <button class="page-nav-btn" data-action="last" title="最后一页" ${state.currentPage >= totalPages - 1 ? 'disabled' : ''}>⏭</button>
+                        </div>
+                    </div>
+                `;
             } else {
-                pageInfoEl.textContent = '📄 当前内容共 1 页';
+                pageInfoEl.innerHTML = `
+                    <div class="pagination-container">
+                        <span class="page-count">📄 当前内容共 1 页</span>
+                    </div>
+                `;
             }
         }
     }
@@ -472,8 +587,10 @@
 
     function drawHandwrittenText() {
         const w = letterCanvas.width;
-        const h = letterCanvas.height;
-        const lines = state.letterContent.split('\n');
+        const pages = calculatePages();
+        const pageInfo = pages[state.currentPage] || pages[0];
+        const pageContent = state.letterContent.substring(pageInfo.startChar, pageInfo.endChar);
+        const lines = pageContent.split('\n');
         
         letterCtx.font = `${state.fontSize}px ${fonts[state.fontFamily]}`;
         letterCtx.fillStyle = state.inkColor;
@@ -514,23 +631,24 @@
         }
 
         if (isVertical) {
-            drawVerticalText(lines, startX, startY, lineHeight);
+            drawVerticalText(lines, startX, startY, lineHeight, pageInfo.startChar);
         } else {
-            drawHorizontalText(lines, startX, startY, lineHeight, w - 120);
+            drawHorizontalText(lines, startX, startY, lineHeight, w - 120, pageInfo.startChar);
         }
     }
 
-    function drawHorizontalText(lines, startX, startY, lineHeight, maxWidth) {
+    function drawHorizontalText(lines, startX, startY, lineHeight, maxWidth, globalStartChar = 0) {
         let y = startY;
+        let isNewPage = globalStartChar > 0;
         
-        lines.forEach(line => {
+        lines.forEach((line, lineIndex) => {
             if (line.trim() === '') {
                 y += lineHeight;
                 return;
             }
 
             let x = startX;
-            let firstLine = (y === startY);
+            let firstLine = (y === startY) && (lineIndex === 0 || isNewPage);
             if (firstLine && state.currentTemplate !== 'vintage') {
                 x += state.fontSize * 2;
             }
@@ -560,7 +678,7 @@
         });
     }
 
-    function drawVerticalText(lines, startX, startY, colWidth) {
+    function drawVerticalText(lines, startX, startY, colWidth, globalStartChar = 0) {
         let x = startX;
         const maxY = letterCanvas.height - 100;
 
@@ -614,7 +732,9 @@
             opacity: 1,
             rotation: 0
         };
-        state.decorations.push(deco);
+        const currentDecos = getCurrentPageDecorations();
+        currentDecos.push(deco);
+        setCurrentPageDecorations(currentDecos);
         renderDecorations();
         updateDecorationList();
         saveToCache();
@@ -622,8 +742,9 @@
 
     function renderDecorations() {
         decorationLayer.innerHTML = '';
+        const currentDecos = getCurrentPageDecorations();
         
-        state.decorations.forEach(deco => {
+        currentDecos.forEach(deco => {
             const el = document.createElement('div');
             el.className = 'decoration' + (state.selectedDecoration === deco.id ? ' selected' : '');
             el.dataset.id = deco.id;
@@ -726,15 +847,40 @@
 
     function updateDecorationList() {
         const list = document.getElementById('decoration-list');
+        const currentDecos = getCurrentPageDecorations();
+        const totalPages = getTotalPages();
         
-        if (state.decorations.length === 0) {
-            list.innerHTML = '<div class="empty-state">还没有添加装饰，点击左侧装饰按钮添加干花、丝带、火漆印章或邮票吧~</div>';
+        let pageSelectorHtml = '';
+        if (totalPages > 1) {
+            pageSelectorHtml = `
+                <div class="page-decoration-header">
+                    <span style="font-weight:600; margin-right:10px;">当前页面：</span>
+                    <div class="page-tabs">
+                        ${Array.from({ length: totalPages }, (_, i) => 
+                            `<button class="page-tab-btn ${i === state.currentPage ? 'active' : ''}" data-page="${i}">第 ${i + 1} 页</button>`
+                        ).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        if (currentDecos.length === 0) {
+            list.innerHTML = `
+                ${pageSelectorHtml}
+                <div class="empty-state">第 ${state.currentPage + 1} 页还没有添加装饰，点击左侧装饰按钮添加干花、丝带、火漆印章或邮票吧~</div>
+            `;
+            
+            list.querySelectorAll('.page-tab-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    goToPage(parseInt(btn.dataset.page));
+                });
+            });
             return;
         }
 
-        list.innerHTML = '';
+        list.innerHTML = pageSelectorHtml;
         
-        state.decorations.forEach(deco => {
+        currentDecos.forEach(deco => {
             const item = document.createElement('div');
             item.className = 'decoration-item';
             item.innerHTML = `
@@ -766,11 +912,18 @@
             list.appendChild(item);
         });
 
+        list.querySelectorAll('.page-tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                goToPage(parseInt(btn.dataset.page));
+            });
+        });
+
         list.querySelectorAll('input[type="range"]').forEach(input => {
             input.addEventListener('input', (e) => {
                 const id = parseInt(e.target.dataset.id);
                 const prop = e.target.dataset.prop;
-                const deco = state.decorations.find(d => d.id === id);
+                const decos = getCurrentPageDecorations();
+                const deco = decos.find(d => d.id === id);
                 if (deco) {
                     deco[prop] = parseFloat(e.target.value);
                     e.target.parentElement.querySelector('span').textContent = 
@@ -785,7 +938,9 @@
         list.querySelectorAll('.btn-delete').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const id = parseInt(e.target.dataset.id);
-                state.decorations = state.decorations.filter(d => d.id !== id);
+                const decos = getCurrentPageDecorations();
+                const newDecos = decos.filter(d => d.id !== id);
+                setCurrentPageDecorations(newDecos);
                 if (state.selectedDecoration === id) {
                     state.selectedDecoration = null;
                 }
@@ -1078,6 +1233,7 @@
     function exportLetter() {
         const pages = calculatePages();
         const scale = state.exportScale;
+        const timestamp = Date.now();
 
         for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
             const exportCanvas = document.createElement('canvas');
@@ -1096,24 +1252,38 @@
                 drawHandwrittenTextForExport(ctx, pages[pageIndex]);
             }
 
-            if (pageIndex === 0) {
-                ctx.drawImage(drawingCanvas, 0, 0);
+            ensurePageDataExists(pageIndex);
+            const pageDecos = state.pageDecorations[String(pageIndex)] || [];
+            const pageDrawings = state.pageDrawingPaths[String(pageIndex)] || [];
 
-                state.decorations.forEach(deco => {
-                    ctx.save();
-                    ctx.globalAlpha = deco.opacity;
-                    ctx.translate(deco.x + deco.size / 2, deco.y + deco.size / 2);
-                    ctx.rotate(deco.rotation * Math.PI / 180);
-                    ctx.font = (deco.size * 0.9) + 'px serif';
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    ctx.fillText(deco.emoji, 0, 0);
-                    ctx.restore();
-                });
-            }
+            pageDrawings.forEach(path => {
+                if (path.length < 2) return;
+                ctx.strokeStyle = path[0].color;
+                ctx.lineWidth = path[0].size;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.beginPath();
+                ctx.moveTo(path[0].x, path[0].y);
+                for (let i = 1; i < path.length; i++) {
+                    ctx.lineTo(path[i].x, path[i].y);
+                }
+                ctx.stroke();
+            });
+
+            pageDecos.forEach(deco => {
+                ctx.save();
+                ctx.globalAlpha = deco.opacity;
+                ctx.translate(deco.x + deco.size / 2, deco.y + deco.size / 2);
+                ctx.rotate(deco.rotation * Math.PI / 180);
+                ctx.font = (deco.size * 0.9) + 'px serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(deco.emoji, 0, 0);
+                ctx.restore();
+            });
 
             const link = document.createElement('a');
-            link.download = `letter_${Date.now()}_page${pageIndex + 1}.png`;
+            link.download = `letter_${timestamp}_page${pageIndex + 1}.png`;
             link.href = exportCanvas.toDataURL('image/png');
             link.click();
         }
@@ -1404,8 +1574,26 @@
 
     function saveToCache() {
         const saveData = {
-            ...state,
-            drawingPaths: drawingPaths,
+            currentTemplate: state.currentTemplate,
+            currentMode: state.currentMode,
+            currentPage: state.currentPage,
+            pageDecorations: state.pageDecorations,
+            pageDrawingPaths: state.pageDrawingPaths,
+            selectedDecoration: state.selectedDecoration,
+            letterContent: state.letterContent,
+            fontFamily: state.fontFamily,
+            fontSize: state.fontSize,
+            inkColor: state.inkColor,
+            wobble: state.wobble,
+            brushColor: state.brushColor,
+            brushSize: state.brushSize,
+            drawWobble: state.drawWobble,
+            receiverName: state.receiverName,
+            receiverAddress: state.receiverAddress,
+            senderName: state.senderName,
+            senderAddress: state.senderAddress,
+            transparentBg: state.transparentBg,
+            exportScale: state.exportScale,
             timestamp: Date.now()
         };
         try {
@@ -1423,7 +1611,8 @@
                 
                 state.currentTemplate = data.currentTemplate || 'line';
                 state.currentMode = data.currentMode || 'text';
-                state.decorations = data.decorations || [];
+                state.currentPage = data.currentPage || 0;
+                state.selectedDecoration = data.selectedDecoration || null;
                 state.letterContent = data.letterContent || '';
                 state.fontFamily = data.fontFamily || 'handwriting1';
                 state.fontSize = data.fontSize || 20;
@@ -1438,11 +1627,24 @@
                 state.senderAddress = data.senderAddress || '';
                 state.transparentBg = data.transparentBg || false;
                 state.exportScale = data.exportScale || 2;
-                
-                if (data.drawingPaths && data.drawingPaths.length > 0) {
-                    drawingPaths = data.drawingPaths;
-                    redrawPaths();
+
+                if (data.pageDecorations) {
+                    state.pageDecorations = data.pageDecorations;
+                } else if (data.decorations && data.decorations.length > 0) {
+                    state.pageDecorations = { '0': data.decorations };
+                } else {
+                    state.pageDecorations = { '0': [] };
                 }
+
+                if (data.pageDrawingPaths) {
+                    state.pageDrawingPaths = data.pageDrawingPaths;
+                } else if (data.drawingPaths && data.drawingPaths.length > 0) {
+                    state.pageDrawingPaths = { '0': data.drawingPaths };
+                } else {
+                    state.pageDrawingPaths = { '0': [] };
+                }
+                
+                redrawCurrentPagePaths();
 
                 document.querySelectorAll('.template-btn').forEach(btn => {
                     btn.classList.toggle('active', btn.dataset.template === state.currentTemplate);
@@ -1478,23 +1680,6 @@
         } catch (e) {
             console.warn('无法从本地存储恢复:', e);
         }
-    }
-
-    function redrawPaths() {
-        drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
-        drawingPaths.forEach(path => {
-            if (path.length < 2) return;
-            drawingCtx.strokeStyle = path[0].color;
-            drawingCtx.lineWidth = path[0].size;
-            drawingCtx.lineCap = 'round';
-            drawingCtx.lineJoin = 'round';
-            drawingCtx.beginPath();
-            drawingCtx.moveTo(path[0].x, path[0].y);
-            for (let i = 1; i < path.length; i++) {
-                drawingCtx.lineTo(path[i].x, path[i].y);
-            }
-            drawingCtx.stroke();
-        });
     }
 
     document.addEventListener('click', (e) => {
