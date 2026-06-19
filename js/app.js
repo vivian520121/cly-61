@@ -21,14 +21,623 @@
         senderName: '',
         senderAddress: '',
         transparentBg: false,
-        exportScale: 2
+        exportScale: 2,
+        drafts: [],
+        currentDraftId: null,
+        showArchived: false,
+        keepDraftsOnClear: true
     };
+
+    let pendingRenameDraftId = null;
 
     const fonts = {
         handwriting1: '"Kaiti", "STKaiti", "楷体", cursive',
         handwriting2: '"Xingkai", "STXingkai", "行楷", cursive',
         handwriting3: '"SimSun", "STSong", "宋体", serif'
     };
+
+    function generateDraftId() {
+        return 'draft_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    function formatDate(timestamp) {
+        const date = new Date(timestamp);
+        const now = new Date();
+        const diffMs = now - date;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+
+        if (diffMins < 1) return '刚刚';
+        if (diffMins < 60) return `${diffMins}分钟前`;
+        if (diffHours < 24) return `${diffHours}小时前`;
+        if (diffDays < 7) return `${diffDays}天前`;
+        
+        return date.toLocaleDateString('zh-CN', { 
+            month: 'short', 
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
+    function getDraftContentFromState() {
+        return {
+            currentTemplate: state.currentTemplate,
+            currentMode: state.currentMode,
+            currentPage: state.currentPage,
+            pageDecorations: { ...state.pageDecorations },
+            pageDrawingPaths: { ...state.pageDrawingPaths },
+            selectedDecoration: state.selectedDecoration,
+            letterContent: state.letterContent,
+            fontFamily: state.fontFamily,
+            fontSize: state.fontSize,
+            inkColor: state.inkColor,
+            wobble: state.wobble,
+            brushColor: state.brushColor,
+            brushSize: state.brushSize,
+            drawWobble: state.drawWobble,
+            receiverName: state.receiverName,
+            receiverAddress: state.receiverAddress,
+            senderName: state.senderName,
+            senderAddress: state.senderAddress,
+            transparentBg: state.transparentBg,
+            exportScale: state.exportScale
+        };
+    }
+
+    function applyDraftContentToState(content) {
+        state.currentTemplate = content.currentTemplate || 'line';
+        state.currentMode = content.currentMode || 'text';
+        state.currentPage = content.currentPage || 0;
+        state.pageDecorations = content.pageDecorations || { '0': [] };
+        state.pageDrawingPaths = content.pageDrawingPaths || { '0': [] };
+        state.selectedDecoration = content.selectedDecoration || null;
+        state.letterContent = content.letterContent || '';
+        state.fontFamily = content.fontFamily || 'handwriting1';
+        state.fontSize = content.fontSize || 20;
+        state.inkColor = content.inkColor || '#3d3530';
+        state.wobble = content.wobble || 2;
+        state.brushColor = content.brushColor || '#3d3530';
+        state.brushSize = content.brushSize || 3;
+        state.drawWobble = content.drawWobble || 1.5;
+        state.receiverName = content.receiverName || '';
+        state.receiverAddress = content.receiverAddress || '';
+        state.senderName = content.senderName || '';
+        state.senderAddress = content.senderAddress || '';
+        state.transparentBg = content.transparentBg || false;
+        state.exportScale = content.exportScale || 2;
+    }
+
+    function generateThumbnail() {
+        try {
+            const exportCanvas = document.createElement('canvas');
+            exportCanvas.width = 200;
+            exportCanvas.height = 275;
+            const ctx = exportCanvas.getContext('2d');
+            ctx.scale(0.25, 0.25);
+
+            ctx.fillStyle = '#fffef8';
+            ctx.fillRect(0, 0, letterCanvas.width, letterCanvas.height);
+            drawPaperBackgroundForExport(ctx);
+
+            if (state.currentMode === 'text' && state.letterContent) {
+                const pages = calculatePages();
+                if (pages.length > 0) {
+                    drawHandwrittenTextForExport(ctx, pages[0]);
+                }
+            }
+
+            const pageDrawings = state.pageDrawingPaths['0'] || [];
+            pageDrawings.forEach(path => {
+                if (path.length < 2) return;
+                ctx.strokeStyle = path[0].color;
+                ctx.lineWidth = path[0].size;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.beginPath();
+                ctx.moveTo(path[0].x, path[0].y);
+                for (let i = 1; i < path.length; i++) {
+                    ctx.lineTo(path[i].x, path[i].y);
+                }
+                ctx.stroke();
+            });
+
+            const pageDecos = state.pageDecorations['0'] || [];
+            pageDecos.forEach(deco => {
+                ctx.save();
+                ctx.globalAlpha = deco.opacity;
+                ctx.translate(deco.x + deco.size / 2, deco.y + deco.size / 2);
+                ctx.rotate(deco.rotation * Math.PI / 180);
+                ctx.font = (deco.size * 0.9) + 'px serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(deco.emoji, 0, 0);
+                ctx.restore();
+            });
+
+            return exportCanvas.toDataURL('image/png');
+        } catch (e) {
+            console.warn('生成缩略图失败:', e);
+            return null;
+        }
+    }
+
+    function saveCurrentDraft() {
+        if (!state.currentDraftId) return;
+
+        const draftIndex = state.drafts.findIndex(d => d.id === state.currentDraftId);
+        if (draftIndex === -1) return;
+
+        const draft = state.drafts[draftIndex];
+        draft.content = getDraftContentFromState();
+        draft.updatedAt = Date.now();
+        draft.thumbnail = generateThumbnail();
+
+        saveDraftsToStorage();
+    }
+
+    function createDraft() {
+        saveCurrentDraft();
+
+        const newDraft = {
+            id: generateDraftId(),
+            name: `书信 ${state.drafts.length + 1}`,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            isArchived: false,
+            thumbnail: null,
+            content: {
+                currentTemplate: 'line',
+                currentMode: 'text',
+                currentPage: 0,
+                pageDecorations: { '0': [] },
+                pageDrawingPaths: { '0': [] },
+                selectedDecoration: null,
+                letterContent: '',
+                fontFamily: 'handwriting1',
+                fontSize: 20,
+                inkColor: '#3d3530',
+                wobble: 2,
+                brushColor: '#3d3530',
+                brushSize: 3,
+                drawWobble: 1.5,
+                receiverName: '',
+                receiverAddress: '',
+                senderName: '',
+                senderAddress: '',
+                transparentBg: false,
+                exportScale: 2
+            }
+        };
+
+        state.drafts.unshift(newDraft);
+        state.currentDraftId = newDraft.id;
+
+        applyDraftContentToState(newDraft.content);
+        updateUIForState();
+        renderLetter();
+        renderEnvelope();
+        renderDecorations();
+        redrawCurrentPagePaths();
+        updatePageInfo();
+        updateDecorationList();
+        renderDraftList();
+        saveDraftsToStorage();
+    }
+
+    function loadDraft(draftId) {
+        const draft = state.drafts.find(d => d.id === draftId);
+        if (!draft) return;
+
+        applyDraftContentToState(draft.content);
+        state.currentDraftId = draftId;
+
+        updateUIForState();
+        renderLetter();
+        renderEnvelope();
+        renderDecorations();
+        redrawCurrentPagePaths();
+        updatePageInfo();
+        updateDecorationList();
+        renderDraftList();
+    }
+
+    function switchDraft(draftId) {
+        if (draftId === state.currentDraftId) return;
+
+        saveCurrentDraft();
+        loadDraft(draftId);
+    }
+
+    function renameDraft(draftId, newName) {
+        const draft = state.drafts.find(d => d.id === draftId);
+        if (!draft) return;
+
+        draft.name = newName.trim() || draft.name;
+        draft.updatedAt = Date.now();
+        renderDraftList();
+        saveDraftsToStorage();
+    }
+
+    function archiveDraft(draftId) {
+        const draft = state.drafts.find(d => d.id === draftId);
+        if (!draft) return;
+
+        draft.isArchived = !draft.isArchived;
+        draft.updatedAt = Date.now();
+        renderDraftList();
+        saveDraftsToStorage();
+
+        if (draftId === state.currentDraftId && draft.isArchived && !state.showArchived) {
+            const firstActiveDraft = state.drafts.find(d => !d.isArchived);
+            if (firstActiveDraft) {
+                switchDraft(firstActiveDraft.id);
+            } else {
+                createDraft();
+            }
+        }
+    }
+
+    function copyDraft(draftId) {
+        const draft = state.drafts.find(d => d.id === draftId);
+        if (!draft) return;
+
+        saveCurrentDraft();
+
+        const newDraft = {
+            id: generateDraftId(),
+            name: `${draft.name} 副本`,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            isArchived: false,
+            thumbnail: draft.thumbnail,
+            content: JSON.parse(JSON.stringify(draft.content))
+        };
+
+        const draftIndex = state.drafts.findIndex(d => d.id === draftId);
+        state.drafts.splice(draftIndex + 1, 0, newDraft);
+        state.currentDraftId = newDraft.id;
+
+        applyDraftContentToState(newDraft.content);
+        updateUIForState();
+        renderLetter();
+        renderEnvelope();
+        renderDecorations();
+        redrawCurrentPagePaths();
+        updatePageInfo();
+        updateDecorationList();
+        renderDraftList();
+        saveDraftsToStorage();
+    }
+
+    function deleteDraft(draftId) {
+        const draftIndex = state.drafts.findIndex(d => d.id === draftId);
+        if (draftIndex === -1) return;
+
+        state.drafts.splice(draftIndex, 1);
+
+        if (draftId === state.currentDraftId) {
+            if (state.drafts.length > 0) {
+                const nextDraft = state.drafts[Math.min(draftIndex, state.drafts.length - 1)];
+                loadDraft(nextDraft.id);
+            } else {
+                createDraft();
+            }
+        } else {
+            renderDraftList();
+            saveDraftsToStorage();
+        }
+    }
+
+    function clearAllDrafts(includeArchived = true) {
+        if (includeArchived) {
+            state.drafts = [];
+        } else {
+            state.drafts = state.drafts.filter(d => d.isArchived);
+        }
+
+        if (state.drafts.length === 0) {
+            createDraft();
+        } else {
+            const firstDraft = state.drafts.find(d => !d.isArchived) || state.drafts[0];
+            loadDraft(firstDraft.id);
+        }
+    }
+
+    function renderDraftList() {
+        const draftListEl = document.getElementById('draft-list');
+        if (!draftListEl) return;
+
+        let filteredDrafts = state.drafts;
+        if (!state.showArchived) {
+            filteredDrafts = state.drafts.filter(d => !d.isArchived);
+        }
+
+        if (filteredDrafts.length === 0) {
+            draftListEl.innerHTML = `
+                <div class="draft-empty">
+                    ${state.showArchived ? '暂无草稿，点击上方按钮新建' : '暂无草稿，点击上方按钮新建<br>或勾选"显示已归档"查看归档草稿'}
+                </div>
+            `;
+            return;
+        }
+
+        draftListEl.innerHTML = filteredDrafts.map(draft => `
+            <div class="draft-item ${draft.id === state.currentDraftId ? 'active' : ''} ${draft.isArchived ? 'archived' : ''}" 
+                 data-id="${draft.id}">
+                <div class="draft-thumbnail">
+                    ${draft.thumbnail 
+                        ? `<img src="${draft.thumbnail}" alt="${draft.name}">`
+                        : '<div class="draft-thumbnail-placeholder">💌</div>'
+                    }
+                </div>
+                <div class="draft-info">
+                    <div class="draft-name">${escapeHtml(draft.name)}${draft.isArchived ? ' 📦' : ''}</div>
+                    <div class="draft-date">${formatDate(draft.updatedAt)}</div>
+                </div>
+                <div class="draft-item-actions">
+                    <button class="btn-rename" data-action="rename" data-id="${draft.id}" title="重命名">✏️</button>
+                    <button class="btn-archive" data-action="archive" data-id="${draft.id}" title="${draft.isArchived ? '取消归档' : '归档'}">
+                        ${draft.isArchived ? '📤' : '📦'}
+                    </button>
+                    <button class="btn-copy" data-action="copy" data-id="${draft.id}" title="复制">📋</button>
+                    <button class="btn-delete" data-action="delete" data-id="${draft.id}" title="删除">🗑️</button>
+                </div>
+            </div>
+        `).join('');
+
+        draftListEl.querySelectorAll('.draft-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                if (!e.target.closest('.draft-item-actions button')) {
+                    const draftId = item.dataset.id;
+                    switchDraft(draftId);
+                }
+            });
+        });
+
+        draftListEl.querySelectorAll('.draft-item-actions button').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const action = btn.dataset.action;
+                const draftId = btn.dataset.id;
+
+                switch (action) {
+                    case 'rename':
+                        showRenameModal(draftId);
+                        break;
+                    case 'archive':
+                        archiveDraft(draftId);
+                        break;
+                    case 'copy':
+                        copyDraft(draftId);
+                        break;
+                    case 'delete':
+                        showConfirmModal({
+                            title: '删除草稿',
+                            message: '确定要删除这个草稿吗？此操作无法撤销。',
+                            confirmText: '删除',
+                            onConfirm: () => deleteDraft(draftId)
+                        });
+                        break;
+                }
+            });
+        });
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function showConfirmModal(options) {
+        const modal = document.getElementById('confirm-modal');
+        const titleEl = document.getElementById('modal-title');
+        const messageEl = document.getElementById('modal-message');
+        const extraEl = document.getElementById('modal-extra');
+        const confirmBtn = document.getElementById('modal-confirm');
+        const cancelBtn = document.getElementById('modal-cancel');
+
+        titleEl.textContent = options.title || '确认操作';
+        messageEl.textContent = options.message || '确定要执行此操作吗？';
+        confirmBtn.textContent = options.confirmText || '确定';
+        confirmBtn.className = options.confirmClass || 'btn-danger';
+        extraEl.innerHTML = options.extraHtml || '';
+
+        modal.classList.add('active');
+
+        const handleConfirm = () => {
+            modal.classList.remove('active');
+            cleanup();
+            if (options.onConfirm) options.onConfirm();
+        };
+
+        const handleCancel = () => {
+            modal.classList.remove('active');
+            cleanup();
+            if (options.onCancel) options.onCancel();
+        };
+
+        const handleKeydown = (e) => {
+            if (e.key === 'Escape') handleCancel();
+            if (e.key === 'Enter') handleConfirm();
+        };
+
+        const cleanup = () => {
+            confirmBtn.removeEventListener('click', handleConfirm);
+            cancelBtn.removeEventListener('click', handleCancel);
+            document.removeEventListener('keydown', handleKeydown);
+        };
+
+        confirmBtn.addEventListener('click', handleConfirm);
+        cancelBtn.addEventListener('click', handleCancel);
+        document.addEventListener('keydown', handleKeydown);
+    }
+
+    function showRenameModal(draftId) {
+        const modal = document.getElementById('rename-modal');
+        const input = document.getElementById('rename-input');
+        const confirmBtn = document.getElementById('rename-confirm');
+        const cancelBtn = document.getElementById('rename-cancel');
+
+        const draft = state.drafts.find(d => d.id === draftId);
+        if (!draft) return;
+
+        input.value = draft.name;
+        pendingRenameDraftId = draftId;
+
+        modal.classList.add('active');
+        setTimeout(() => input.focus(), 100);
+
+        const handleConfirm = () => {
+            const newName = input.value.trim();
+            if (newName && pendingRenameDraftId) {
+                renameDraft(pendingRenameDraftId, newName);
+            }
+            closeModal();
+        };
+
+        const handleCancel = () => {
+            closeModal();
+        };
+
+        const handleKeydown = (e) => {
+            if (e.key === 'Escape') handleCancel();
+            if (e.key === 'Enter') handleConfirm();
+        };
+
+        const closeModal = () => {
+            modal.classList.remove('active');
+            pendingRenameDraftId = null;
+            cleanup();
+        };
+
+        const cleanup = () => {
+            confirmBtn.removeEventListener('click', handleConfirm);
+            cancelBtn.removeEventListener('click', handleCancel);
+            document.removeEventListener('keydown', handleKeydown);
+        };
+
+        confirmBtn.addEventListener('click', handleConfirm);
+        cancelBtn.addEventListener('click', handleCancel);
+        document.addEventListener('keydown', handleKeydown);
+    }
+
+    function saveDraftsToStorage() {
+        try {
+            localStorage.setItem('letterDrafts', JSON.stringify(state.drafts));
+            localStorage.setItem('currentDraftId', state.currentDraftId);
+            localStorage.setItem('keepDraftsOnClear', state.keepDraftsOnClear);
+        } catch (e) {
+            console.warn('无法保存草稿到本地存储:', e);
+        }
+    }
+
+    function loadDraftsFromStorage() {
+        try {
+            const savedDrafts = localStorage.getItem('letterDrafts');
+            const savedCurrentDraftId = localStorage.getItem('currentDraftId');
+            const savedKeepDrafts = localStorage.getItem('keepDraftsOnClear');
+
+            if (savedKeepDrafts !== null) {
+                state.keepDraftsOnClear = savedKeepDrafts === 'true';
+            }
+
+            if (savedDrafts) {
+                state.drafts = JSON.parse(savedDrafts);
+                
+                if (state.drafts.length > 0) {
+                    let targetDraftId = savedCurrentDraftId;
+                    if (!targetDraftId || !state.drafts.find(d => d.id === targetDraftId)) {
+                        const firstActive = state.drafts.find(d => !d.isArchived);
+                        targetDraftId = firstActive ? firstActive.id : state.drafts[0].id;
+                    }
+                    
+                    loadDraft(targetDraftId);
+                    return true;
+                }
+            }
+
+            const legacyDraft = localStorage.getItem('letterDraft');
+            if (legacyDraft) {
+                const legacyData = JSON.parse(legacyDraft);
+                const migratedDraft = {
+                    id: generateDraftId(),
+                    name: '迁移的草稿',
+                    createdAt: legacyData.timestamp || Date.now(),
+                    updatedAt: legacyData.timestamp || Date.now(),
+                    isArchived: false,
+                    thumbnail: null,
+                    content: {
+                        currentTemplate: legacyData.currentTemplate || 'line',
+                        currentMode: legacyData.currentMode || 'text',
+                        currentPage: legacyData.currentPage || 0,
+                        pageDecorations: legacyData.pageDecorations || { '0': [] },
+                        pageDrawingPaths: legacyData.pageDrawingPaths || { '0': [] },
+                        selectedDecoration: legacyData.selectedDecoration || null,
+                        letterContent: legacyData.letterContent || '',
+                        fontFamily: legacyData.fontFamily || 'handwriting1',
+                        fontSize: legacyData.fontSize || 20,
+                        inkColor: legacyData.inkColor || '#3d3530',
+                        wobble: legacyData.wobble || 2,
+                        brushColor: legacyData.brushColor || '#3d3530',
+                        brushSize: legacyData.brushSize || 3,
+                        drawWobble: legacyData.drawWobble || 1.5,
+                        receiverName: legacyData.receiverName || '',
+                        receiverAddress: legacyData.receiverAddress || '',
+                        senderName: legacyData.senderName || '',
+                        senderAddress: legacyData.senderAddress || '',
+                        transparentBg: legacyData.transparentBg || false,
+                        exportScale: legacyData.exportScale || 2
+                    }
+                };
+                state.drafts = [migratedDraft];
+                loadDraft(migratedDraft.id);
+                saveDraftsToStorage();
+                localStorage.removeItem('letterDraft');
+                return true;
+            }
+
+            return false;
+        } catch (e) {
+            console.warn('无法从本地存储加载草稿:', e);
+            return false;
+        }
+    }
+
+    function updateUIForState() {
+        document.querySelectorAll('.template-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.template === state.currentTemplate);
+        });
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === state.currentMode);
+        });
+        document.getElementById('text-panel').style.display = state.currentMode === 'text' ? 'block' : 'none';
+        document.getElementById('draw-panel').style.display = state.currentMode === 'draw' ? 'block' : 'none';
+        drawingCanvas.style.pointerEvents = state.currentMode === 'draw' ? 'auto' : 'none';
+
+        document.getElementById('letter-content').value = state.letterContent;
+        document.getElementById('font-family').value = state.fontFamily;
+        document.getElementById('font-size').value = state.fontSize;
+        document.getElementById('font-size-value').textContent = state.fontSize + 'px';
+        document.getElementById('ink-color').value = state.inkColor;
+        document.getElementById('wobble').value = state.wobble;
+        document.getElementById('wobble-value').textContent = state.wobble;
+        document.getElementById('brush-color').value = state.brushColor;
+        document.getElementById('brush-size').value = state.brushSize;
+        document.getElementById('brush-size-value').textContent = state.brushSize + 'px';
+        document.getElementById('draw-wobble').value = state.drawWobble;
+        document.getElementById('draw-wobble-value').textContent = state.drawWobble;
+        document.getElementById('receiver-name').value = state.receiverName;
+        document.getElementById('receiver-address').value = state.receiverAddress;
+        document.getElementById('sender-name').value = state.senderName;
+        document.getElementById('sender-address').value = state.senderAddress;
+        document.getElementById('transparent-bg').checked = state.transparentBg;
+        document.getElementById('export-scale').value = state.exportScale;
+        document.getElementById('keep-drafts').checked = state.keepDraftsOnClear;
+        document.getElementById('show-archived').checked = state.showArchived;
+    }
 
     const letterCanvas = document.getElementById('letter-canvas');
     const letterCtx = letterCanvas.getContext('2d');
@@ -93,7 +702,13 @@
 
     function init() {
         bindEvents();
-        loadFromCache();
+        
+        const hasDrafts = loadDraftsFromStorage();
+        if (!hasDrafts) {
+            createDraft();
+        }
+        
+        renderDraftList();
         renderLetter();
         renderEnvelope();
         updateDecorationList();
@@ -256,10 +871,91 @@
             renderEnvelope();
             alert('草稿已恢复！');
         });
+        document.getElementById('new-draft').addEventListener('click', () => {
+            createDraft();
+        });
+
+        document.getElementById('clear-all-drafts').addEventListener('click', () => {
+            const hasArchived = state.drafts.some(d => d.isArchived);
+            let extraHtml = '';
+            if (hasArchived) {
+                extraHtml = `
+                    <label>
+                        <input type="checkbox" id="include-archived" checked> 
+                        同时清除已归档的草稿
+                    </label>
+                `;
+            }
+            
+            showConfirmModal({
+                title: '清空全部草稿',
+                message: '确定要清空所有草稿吗？此操作无法撤销。',
+                confirmText: '清空全部',
+                extraHtml: extraHtml,
+                onConfirm: () => {
+                    const includeArchivedEl = document.getElementById('include-archived');
+                    const includeArchived = includeArchivedEl ? includeArchivedEl.checked : true;
+                    clearAllDrafts(includeArchived);
+                }
+            });
+        });
+
+        document.getElementById('show-archived').addEventListener('change', (e) => {
+            state.showArchived = e.target.checked;
+            renderDraftList();
+            saveDraftsToStorage();
+        });
+
+        document.getElementById('keep-drafts').addEventListener('change', (e) => {
+            state.keepDraftsOnClear = e.target.checked;
+            saveDraftsToStorage();
+        });
+
+        document.getElementById('save-draft').addEventListener('click', () => {
+            saveCurrentDraft();
+            renderDraftList();
+            alert('草稿已保存！');
+        });
+
+        document.getElementById('load-draft').addEventListener('click', () => {
+            if (state.currentDraftId) {
+                const draft = state.drafts.find(d => d.id === state.currentDraftId);
+                if (draft) {
+                    loadDraft(draft.id);
+                    alert('草稿已恢复！');
+                }
+            }
+        });
+
         document.getElementById('clear-cache').addEventListener('click', () => {
-            if (confirm('确定要清除所有本地缓存吗？')) {
-                localStorage.removeItem('letterDraft');
-                location.reload();
+            if (state.keepDraftsOnClear) {
+                showConfirmModal({
+                    title: '清除缓存',
+                    message: '将清除临时设置，但保留所有草稿。确定继续吗？',
+                    confirmText: '清除缓存',
+                    confirmClass: 'btn-danger',
+                    onConfirm: () => {
+                        const keysToKeep = ['letterDrafts', 'currentDraftId', 'keepDraftsOnClear'];
+                        Object.keys(localStorage).forEach(key => {
+                            if (!keysToKeep.includes(key)) {
+                                localStorage.removeItem(key);
+                            }
+                        });
+                        alert('缓存已清除，草稿已保留！');
+                        location.reload();
+                    }
+                });
+            } else {
+                showConfirmModal({
+                    title: '清除所有数据',
+                    message: '将清除所有数据，包括草稿。确定继续吗？此操作无法撤销！',
+                    confirmText: '清除全部',
+                    confirmClass: 'btn-danger',
+                    onConfirm: () => {
+                        localStorage.clear();
+                        location.reload();
+                    }
+                });
             }
         });
 
@@ -1572,6 +2268,8 @@
         link.click();
     }
 
+    let autoSaveTimeout = null;
+
     function saveToCache() {
         const saveData = {
             currentTemplate: state.currentTemplate,
@@ -1601,6 +2299,22 @@
         } catch (e) {
             console.warn('无法保存到本地存储:', e);
         }
+
+        if (autoSaveTimeout) {
+            clearTimeout(autoSaveTimeout);
+        }
+        autoSaveTimeout = setTimeout(() => {
+            if (state.currentDraftId) {
+                const draftIndex = state.drafts.findIndex(d => d.id === state.currentDraftId);
+                if (draftIndex !== -1) {
+                    const draft = state.drafts[draftIndex];
+                    draft.content = getDraftContentFromState();
+                    draft.updatedAt = Date.now();
+                    saveDraftsToStorage();
+                    renderDraftList();
+                }
+            }
+        }, 1000);
     }
 
     function loadFromCache() {

@@ -14,6 +14,22 @@
         </header>
 
         <div class="main-layout">
+            <aside class="draft-sidebar">
+                <div class="panel">
+                    <h3>📁 草稿箱</h3>
+                    <div class="draft-actions">
+                        <button id="new-draft" class="btn-primary">✏️ 新建草稿</button>
+                        <button id="clear-all-drafts" class="btn-danger">🗑️ 清空全部</button>
+                    </div>
+                    <div class="draft-filter">
+                        <label>
+                            <input type="checkbox" id="show-archived"> 显示已归档
+                        </label>
+                    </div>
+                    <div id="draft-list" class="draft-list"></div>
+                </div>
+            </aside>
+
             <aside class="sidebar">
                 <div class="panel">
                     <h3>📄 信纸模板</h3>
@@ -146,6 +162,11 @@
                         </div>
                         <button id="export-letter" class="btn-primary">📄 导出信纸</button>
                         <button id="export-envelope" class="btn-primary">✉️ 导岀信封</button>
+                        <div class="control-row">
+                            <label>
+                                <input type="checkbox" id="keep-drafts" checked> 清除缓存时保留草稿
+                            </label>
+                        </div>
                         <button id="save-draft" class="btn-secondary">💾 保存草稿</button>
                         <button id="load-draft" class="btn-secondary">📂 恢复草稿</button>
                         <button id="clear-cache" class="btn-danger">🗑️ 清除缓存</button>
@@ -188,6 +209,29 @@
         <footer class="app-footer">
             <p>💌 每一封信，都是一份温柔的心意</p>
         </footer>
+    </div>
+
+    <div id="confirm-modal" class="modal-overlay">
+        <div class="modal-dialog">
+            <h3 id="modal-title">确认操作</h3>
+            <p id="modal-message">确定要执行此操作吗？</p>
+            <div id="modal-extra" class="modal-extra"></div>
+            <div class="modal-actions">
+                <button id="modal-cancel" class="btn-secondary">取消</button>
+                <button id="modal-confirm" class="btn-danger">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="rename-modal" class="modal-overlay">
+        <div class="modal-dialog">
+            <h3>重命名草稿</h3>
+            <input type="text" id="rename-input" placeholder="请输入新名称" maxlength="30">
+            <div class="modal-actions">
+                <button id="rename-cancel" class="btn-secondary">取消</button>
+                <button id="rename-confirm" class="btn-primary">确定</button>
+            </div>
+        </div>
     </div>
 
     <script src="js/app.js"></script>
