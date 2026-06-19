@@ -56,6 +56,7 @@
         renderLetter();
         renderEnvelope();
         updateDecorationList();
+        updatePageInfo();
     }
 
     function bindEvents() {
@@ -177,6 +178,7 @@
 
         document.getElementById('transparent-bg').addEventListener('change', (e) => {
             state.transparentBg = e.target.checked;
+            renderLetter();
             saveToCache();
         });
 
@@ -300,6 +302,19 @@
         drawPaperBackground();
         if (state.currentMode === 'text' && state.letterContent) {
             drawHandwrittenText();
+        }
+        updatePageInfo();
+    }
+
+    function updatePageInfo() {
+        const pages = calculatePages();
+        const pageInfoEl = document.getElementById('page-info');
+        if (pageInfoEl) {
+            if (pages.length > 1) {
+                pageInfoEl.textContent = `📄 当前内容共 ${pages.length} 页，导出时将自动生成 ${pages.length} 张图片`;
+            } else {
+                pageInfoEl.textContent = '📄 当前内容共 1 页';
+            }
         }
     }
 
@@ -884,55 +899,229 @@
         envelopeCtx.fillText('✉️', w / 2, h - 70);
     }
 
-    function exportLetter() {
-        const scale = state.exportScale;
-        const exportCanvas = document.createElement('canvas');
-        exportCanvas.width = letterCanvas.width * scale;
-        exportCanvas.height = letterCanvas.height * scale;
-        const ctx = exportCanvas.getContext('2d');
-        ctx.scale(scale, scale);
-
-        if (state.transparentBg) {
-            ctx.clearRect(0, 0, letterCanvas.width, letterCanvas.height);
-            const prevTransparent = state.transparentBg;
-            state.transparentBg = true;
-            drawPaperBackgroundForExport(ctx);
-            if (state.currentMode === 'text' && state.letterContent) {
-                drawHandwrittenTextForExport(ctx);
-            }
-            state.transparentBg = prevTransparent;
-        } else {
-            ctx.drawImage(letterCanvas, 0, 0);
+    function calculatePages() {
+        const pages = [];
+        if (!state.letterContent) {
+            pages.push({ startChar: 0, endChar: 0 });
+            return pages;
         }
-        
-        ctx.drawImage(drawingCanvas, 0, 0);
 
-        state.decorations.forEach(deco => {
-            ctx.save();
-            ctx.globalAlpha = deco.opacity;
-            ctx.translate(deco.x + deco.size / 2, deco.y + deco.size / 2);
-            ctx.rotate(deco.rotation * Math.PI / 180);
-            ctx.font = (deco.size * 0.9) + 'px serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(deco.emoji, 0, 0);
-            ctx.restore();
+        const w = letterCanvas.width;
+        const lines = state.letterContent.split('\n');
+        const ctx = letterCtx;
+        
+        ctx.font = `${state.fontSize}px ${fonts[state.fontFamily]}`;
+        ctx.textBaseline = 'top';
+
+        let startX, startY, lineHeight, isVertical, maxWidth;
+
+        switch (state.currentTemplate) {
+            case 'line':
+                startX = 90;
+                startY = 85;
+                lineHeight = 34;
+                isVertical = false;
+                maxWidth = w - 120;
+                break;
+            case 'grid':
+                startX = 70;
+                startY = 68;
+                lineHeight = 36;
+                isVertical = false;
+                maxWidth = w - 120;
+                break;
+            case 'vintage':
+                startX = 80;
+                startY = 100;
+                lineHeight = state.fontSize * 1.8;
+                isVertical = false;
+                maxWidth = w - 120;
+                break;
+            case 'vertical':
+                startX = w - 75;
+                startY = 90;
+                lineHeight = 56;
+                isVertical = true;
+                break;
+            default:
+                startX = 80;
+                startY = 80;
+                lineHeight = 32;
+                isVertical = false;
+                maxWidth = w - 120;
+        }
+
+        if (isVertical) {
+            return calculateVerticalPages(lines, startX, startY, lineHeight);
+        } else {
+            return calculateHorizontalPages(lines, startX, startY, lineHeight, maxWidth);
+        }
+    }
+
+    function calculateHorizontalPages(lines, startX, startY, lineHeight, maxWidth) {
+        const pages = [];
+        const maxY = letterCanvas.height - 80;
+        let charIndex = 0;
+        let currentPageStart = 0;
+        let y = startY;
+
+        lines.forEach((line, lineIndex) => {
+            if (line.trim() === '') {
+                y += lineHeight;
+                charIndex++;
+                if (y > maxY) {
+                    pages.push({ startChar: currentPageStart, endChar: charIndex - 1 });
+                    currentPageStart = charIndex - 1;
+                    y = startY + lineHeight;
+                }
+                return;
+            }
+
+            let x = startX;
+            let firstLine = (y === startY);
+            if (firstLine && state.currentTemplate !== 'vintage') {
+                x += state.fontSize * 2;
+            }
+
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                const charWidth = letterCtx.measureText(char).width;
+                
+                if (x + charWidth > letterCanvas.width - 80) {
+                    x = startX;
+                    y += lineHeight;
+                    if (y > maxY) {
+                        pages.push({ startChar: currentPageStart, endChar: charIndex });
+                        currentPageStart = charIndex;
+                        y = startY;
+                        firstLine = true;
+                        if (firstLine && state.currentTemplate !== 'vintage') {
+                            x += state.fontSize * 2;
+                        }
+                    }
+                }
+
+                x += charWidth + 1;
+                charIndex++;
+            }
+            y += lineHeight;
+            charIndex++;
+
+            if (y > maxY && lineIndex < lines.length - 1) {
+                pages.push({ startChar: currentPageStart, endChar: charIndex - 1 });
+                currentPageStart = charIndex - 1;
+                y = startY;
+            }
         });
 
-        const link = document.createElement('a');
-        link.download = `letter_${Date.now()}.png`;
-        link.href = exportCanvas.toDataURL('image/png');
-        link.click();
+        pages.push({ startChar: currentPageStart, endChar: charIndex });
+        return pages;
+    }
+
+    function calculateVerticalPages(lines, startX, startY, colWidth) {
+        const pages = [];
+        const maxY = letterCanvas.height - 100;
+        const minX = 50;
+        let charIndex = 0;
+        let currentPageStart = 0;
+        let x = startX;
+
+        lines.forEach((line, lineIndex) => {
+            if (line.trim() === '') {
+                x -= colWidth;
+                charIndex++;
+                if (x < minX) {
+                    pages.push({ startChar: currentPageStart, endChar: charIndex - 1 });
+                    currentPageStart = charIndex - 1;
+                    x = startX - colWidth;
+                }
+                return;
+            }
+
+            let y = startY;
+
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                if (char === ' ') {
+                    y += state.fontSize * 0.8;
+                    charIndex++;
+                    continue;
+                }
+
+                if (y + state.fontSize > maxY) {
+                    y = startY;
+                    x -= colWidth;
+                    if (x < minX) {
+                        pages.push({ startChar: currentPageStart, endChar: charIndex });
+                        currentPageStart = charIndex;
+                        x = startX;
+                    }
+                }
+
+                y += state.fontSize * 1.1;
+                charIndex++;
+            }
+            x -= colWidth;
+            charIndex++;
+
+            if (x < minX && lineIndex < lines.length - 1) {
+                pages.push({ startChar: currentPageStart, endChar: charIndex - 1 });
+                currentPageStart = charIndex - 1;
+                x = startX;
+            }
+        });
+
+        pages.push({ startChar: currentPageStart, endChar: charIndex });
+        return pages;
+    }
+
+    function exportLetter() {
+        const pages = calculatePages();
+        const scale = state.exportScale;
+
+        for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+            const exportCanvas = document.createElement('canvas');
+            exportCanvas.width = letterCanvas.width * scale;
+            exportCanvas.height = letterCanvas.height * scale;
+            const ctx = exportCanvas.getContext('2d');
+            ctx.scale(scale, scale);
+
+            if (!state.transparentBg) {
+                ctx.fillStyle = '#fffef8';
+                ctx.fillRect(0, 0, letterCanvas.width, letterCanvas.height);
+            }
+
+            drawPaperBackgroundForExport(ctx);
+            if (state.currentMode === 'text' && state.letterContent) {
+                drawHandwrittenTextForExport(ctx, pages[pageIndex]);
+            }
+
+            if (pageIndex === 0) {
+                ctx.drawImage(drawingCanvas, 0, 0);
+
+                state.decorations.forEach(deco => {
+                    ctx.save();
+                    ctx.globalAlpha = deco.opacity;
+                    ctx.translate(deco.x + deco.size / 2, deco.y + deco.size / 2);
+                    ctx.rotate(deco.rotation * Math.PI / 180);
+                    ctx.font = (deco.size * 0.9) + 'px serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(deco.emoji, 0, 0);
+                    ctx.restore();
+                });
+            }
+
+            const link = document.createElement('a');
+            link.download = `letter_${Date.now()}_page${pageIndex + 1}.png`;
+            link.href = exportCanvas.toDataURL('image/png');
+            link.click();
+        }
     }
 
     function drawPaperBackgroundForExport(ctx) {
         const w = letterCanvas.width;
         const h = letterCanvas.height;
-
-        if (!state.transparentBg) {
-            ctx.fillStyle = '#fffef8';
-            ctx.fillRect(0, 0, w, h);
-        }
 
         switch (state.currentTemplate) {
             case 'line':
@@ -1002,17 +1191,14 @@
     }
 
     function drawVintagePaperOnCtx(ctx, w, h) {
-        const gradient = ctx.createRadialGradient(w / 2, h / 2, 100, w / 2, h / 2, Math.max(w, h));
-        gradient.addColorStop(0, '#fdf4e8');
-        gradient.addColorStop(0.7, '#f8e8d0');
-        gradient.addColorStop(1, '#e8d4b8');
-        
-        if (state.transparentBg) {
-            ctx.globalAlpha = 0.9;
+        if (!state.transparentBg) {
+            const gradient = ctx.createRadialGradient(w / 2, h / 2, 100, w / 2, h / 2, Math.max(w, h));
+            gradient.addColorStop(0, '#fdf4e8');
+            gradient.addColorStop(0.7, '#f8e8d0');
+            gradient.addColorStop(1, '#e8d4b8');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, w, h);
         }
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, w, h);
-        ctx.globalAlpha = 1;
 
         ctx.strokeStyle = '#8b7355';
         ctx.lineWidth = 3;
@@ -1068,9 +1254,11 @@
         ctx.stroke();
     }
 
-    function drawHandwrittenTextForExport(ctx) {
+    function drawHandwrittenTextForExport(ctx, pageInfo) {
         const w = letterCanvas.width;
-        const lines = state.letterContent.split('\n');
+        const content = state.letterContent;
+        const pageContent = content.substring(pageInfo.startChar, pageInfo.endChar);
+        const lines = pageContent.split('\n');
         
         ctx.font = `${state.fontSize}px ${fonts[state.fontFamily]}`;
         ctx.fillStyle = state.inkColor;
@@ -1111,23 +1299,24 @@
         }
 
         if (isVertical) {
-            drawVerticalTextOnCtx(ctx, lines, startX, startY, lineHeight);
+            drawVerticalTextOnCtx(ctx, lines, startX, startY, lineHeight, pageInfo.startChar);
         } else {
-            drawHorizontalTextOnCtx(ctx, lines, startX, startY, lineHeight, w - 120);
+            drawHorizontalTextOnCtx(ctx, lines, startX, startY, lineHeight, w - 120, pageInfo.startChar);
         }
     }
 
-    function drawHorizontalTextOnCtx(ctx, lines, startX, startY, lineHeight, maxWidth) {
+    function drawHorizontalTextOnCtx(ctx, lines, startX, startY, lineHeight, maxWidth, globalStartChar) {
         let y = startY;
+        let isNewPage = globalStartChar > 0;
         
-        lines.forEach(line => {
+        lines.forEach((line, lineIndex) => {
             if (line.trim() === '') {
                 y += lineHeight;
                 return;
             }
 
             let x = startX;
-            let firstLine = (y === startY);
+            let firstLine = (y === startY) && (lineIndex === 0 || isNewPage);
             if (firstLine && state.currentTemplate !== 'vintage') {
                 x += state.fontSize * 2;
             }
@@ -1157,7 +1346,7 @@
         });
     }
 
-    function drawVerticalTextOnCtx(ctx, lines, startX, startY, colWidth) {
+    function drawVerticalTextOnCtx(ctx, lines, startX, startY, colWidth, globalStartChar) {
         let x = startX;
         const maxY = letterCanvas.height - 100;
 

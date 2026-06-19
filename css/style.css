@@ -421,9 +421,21 @@ body {
     padding: 30px;
     box-shadow: var(--shadow-soft);
     display: flex;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
     min-height: 600px;
+    gap: 16px;
+}
+
+.page-info {
+    font-size: 0.95rem;
+    color: var(--text-dark);
+    background: var(--macaron-yellow);
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--macaron-brown);
+    font-weight: 500;
 }
 
 .canvas-wrapper {
