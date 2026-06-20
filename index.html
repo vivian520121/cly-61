@@ -113,12 +113,31 @@
 
                 <div class="panel">
                     <h3>🎨 装饰素材</h3>
-                    <div class="decoration-grid">
-                        <button class="deco-btn" data-deco="flower">🌸 干花</button>
-                        <button class="deco-btn" data-deco="ribbon">🎀 丝带</button>
-                        <button class="deco-btn" data-deco="wax">🔮 火漆</button>
-                        <button class="deco-btn" data-deco="stamp">📮 邮票</button>
+                    <div class="decoration-types">
+                        <button class="deco-type-btn active" data-type="flower">🌸 干花</button>
+                        <button class="deco-type-btn" data-type="ribbon">🎀 丝带</button>
+                        <button class="deco-type-btn" data-type="wax">🔮 火漆</button>
+                        <button class="deco-type-btn" data-type="stamp">📮 邮票</button>
                     </div>
+                    <div class="color-picker-section">
+                        <span class="color-picker-label">马卡龙配色：</span>
+                        <div class="color-options">
+                            <button class="color-option" data-color="pink" style="background-color: #f5b8c8;" title="樱花粉"></button>
+                            <button class="color-option" data-color="peach" style="background-color: #fcc8a8;" title="蜜桃橙"></button>
+                            <button class="color-option" data-color="yellow" style="background-color: #fce8a8;" title="柠檬黄"></button>
+                            <button class="color-option" data-color="green" style="background-color: #b8d8b8;" title="薄荷绿"></button>
+                            <button class="color-option" data-color="blue" style="background-color: #a8c8e8;" title="天空蓝"></button>
+                            <button class="color-option" data-color="purple" style="background-color: #d0b8e8;" title="薰衣草紫"></button>
+                            <button class="color-option" data-color="cream" style="background-color: #f5e8d8;" title="奶油白"></button>
+                            <button class="color-option" data-color="brown" style="background-color: #c8a888;" title="焦糖棕"></button>
+                            <button class="color-option active" data-color="default" style="background: linear-gradient(135deg, #f5b8c8, #a8c8e8, #d0b8e8);" title="默认原色">✨</button>
+                        </div>
+                    </div>
+                    <div class="decoration-preview">
+                        <span class="preview-label">当前选择：</span>
+                        <span id="decoration-preview-text">🌸 干花 (默认)</span>
+                    </div>
+                    <button id="add-decoration-btn" class="btn-primary">➕ 添加装饰</button>
                     <button id="clear-decorations" class="btn-secondary">清除装饰</button>
                 </div>
 

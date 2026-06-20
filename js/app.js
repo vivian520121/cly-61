@@ -8,6 +8,7 @@
         pageDecorations: { '0': [] },
         pageDrawingPaths: { '0': [] },
         selectedDecoration: null,
+        selectedDecorations: [],
         letterContent: '',
         fontFamily: 'handwriting1',
         fontSize: 20,
@@ -26,7 +27,11 @@
         currentDraftId: null,
         showArchived: false,
         keepDraftsOnClear: true,
-        customMaterials: []
+        customMaterials: [],
+        snapToEdge: true,
+        snapThreshold: 10,
+        currentDecoType: 'flower',
+        currentDecoColor: null
     };
 
     let pendingRenameDraftId = null;
@@ -702,11 +707,22 @@
         }
     }
 
+    const macaronColors = {
+        pink: { color: '#f5b8c8', name: '樱花粉' },
+        peach: { color: '#fcc8a8', name: '蜜桃橙' },
+        yellow: { color: '#fce8a8', name: '柠檬黄' },
+        green: { color: '#b8d8b8', name: '薄荷绿' },
+        blue: { color: '#a8c8e8', name: '天空蓝' },
+        purple: { color: '#d0b8e8', name: '薰衣草紫' },
+        cream: { color: '#f5e8d8', name: '奶油白' },
+        brown: { color: '#c8a888', name: '焦糖棕' }
+    };
+
     const decorationTemplates = {
-        flower: { emoji: '🌸', name: '干花', defaultSize: 80 },
-        ribbon: { emoji: '🎀', name: '丝带', defaultSize: 90 },
-        wax: { emoji: '🔮', name: '火漆印章', defaultSize: 70 },
-        stamp: { emoji: '📮', name: '邮票', defaultSize: 75 }
+        flower: { emoji: '🌸', name: '干花', defaultSize: 80, hasColors: true },
+        ribbon: { emoji: '🎀', name: '丝带', defaultSize: 90, hasColors: true },
+        wax: { emoji: '🔮', name: '火漆印章', defaultSize: 70, hasColors: true },
+        stamp: { emoji: '📮', name: '邮票', defaultSize: 75, hasColors: true }
     };
 
     function generateMaterialId() {
@@ -1013,10 +1029,26 @@
             saveToCache();
         });
 
-        document.querySelectorAll('.deco-btn').forEach(btn => {
+        document.querySelectorAll('.deco-type-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                addDecoration(btn.dataset.deco);
+                document.querySelectorAll('.deco-type-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                state.currentDecoType = btn.dataset.type;
+                updateDecorationPreview();
             });
+        });
+
+        document.querySelectorAll('.color-option').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.color-option').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                state.currentDecoColor = btn.dataset.color === 'default' ? null : btn.dataset.color;
+                updateDecorationPreview();
+            });
+        });
+
+        document.getElementById('add-decoration-btn').addEventListener('click', () => {
+            addDecoration(state.currentDecoType, state.currentDecoColor);
         });
 
         document.getElementById('clear-decorations').addEventListener('click', () => {
@@ -1626,18 +1658,33 @@
         });
     }
 
-    function addDecoration(type) {
+    function updateDecorationPreview() {
+        const previewEl = document.getElementById('decoration-preview-text');
+        if (!previewEl) return;
+        
+        const template = decorationTemplates[state.currentDecoType];
+        const color = state.currentDecoColor ? macaronColors[state.currentDecoColor] : null;
+        const colorName = color ? ` (${color.name})` : ' (默认)';
+        previewEl.textContent = `${template.emoji} ${template.name}${colorName}`;
+    }
+
+    function addDecoration(type, colorKey = null) {
         const template = decorationTemplates[type];
+        const color = colorKey ? macaronColors[colorKey] : null;
         const deco = {
             id: Date.now(),
             type: type,
             emoji: template.emoji,
             name: template.name,
+            colorKey: colorKey,
+            color: color ? color.color : null,
+            colorName: color ? color.name : null,
             x: letterCanvas.width / 2 - template.defaultSize / 2,
             y: letterCanvas.height / 2 - template.defaultSize / 2,
             size: template.defaultSize,
             opacity: 1,
-            rotation: 0
+            rotation: 0,
+            zIndex: getCurrentPageDecorations().length
         };
         const currentDecos = getCurrentPageDecorations();
         currentDecos.push(deco);
@@ -1651,9 +1698,12 @@
         decorationLayer.innerHTML = '';
         const currentDecos = getCurrentPageDecorations();
         
-        currentDecos.forEach(deco => {
+        const sortedDecos = [...currentDecos].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+        
+        sortedDecos.forEach(deco => {
             const el = document.createElement('div');
-            el.className = 'decoration' + (state.selectedDecoration === deco.id ? ' selected' : '');
+            const isSelected = state.selectedDecorations.includes(deco.id) || state.selectedDecoration === deco.id;
+            el.className = 'decoration' + (isSelected ? ' selected' : '');
             el.dataset.id = deco.id;
             el.style.left = deco.x + 'px';
             el.style.top = deco.y + 'px';
@@ -1661,6 +1711,7 @@
             el.style.height = deco.size + 'px';
             el.style.opacity = deco.opacity;
             el.style.transform = `rotate(${deco.rotation}deg)`;
+            el.style.zIndex = deco.zIndex || 0;
             el.style.display = 'flex';
             el.style.alignItems = 'center';
             el.style.justifyContent = 'center';
@@ -1673,9 +1724,16 @@
                 img.style.height = '100%';
                 img.style.objectFit = 'contain';
                 img.style.pointerEvents = 'none';
+                if (deco.color) {
+                    img.style.filter = `drop-shadow(0 0 8px ${deco.color}) sepia(0.2) saturate(1.5)`;
+                }
                 el.appendChild(img);
             } else {
                 el.style.fontSize = (deco.size * 0.9) + 'px';
+                if (deco.color) {
+                    el.style.filter = `drop-shadow(0 0 6px ${deco.color}) hue-rotate(0deg)`;
+                    el.style.color = deco.color;
+                }
                 el.textContent = deco.emoji;
             }
 
@@ -1683,41 +1741,168 @@
             
             el.addEventListener('click', (e) => {
                 e.stopPropagation();
-                state.selectedDecoration = deco.id;
+                if (e.ctrlKey || e.metaKey) {
+                    toggleDecorationSelection(deco.id);
+                } else if (e.shiftKey && state.selectedDecoration !== null) {
+                    selectDecorationRange(state.selectedDecoration, deco.id);
+                } else {
+                    clearDecorationSelection();
+                    state.selectedDecoration = deco.id;
+                    state.selectedDecorations = [deco.id];
+                }
                 renderDecorations();
                 updateDecorationList();
+            });
+
+            el.addEventListener('dblclick', (e) => {
+                e.stopPropagation();
+                state.selectedDecoration = deco.id;
+                state.selectedDecorations = [deco.id];
+                renderDecorations();
+                openDecorationProperties(deco.id);
             });
 
             decorationLayer.appendChild(el);
         });
     }
 
+    function toggleDecorationSelection(id) {
+        const index = state.selectedDecorations.indexOf(id);
+        if (index > -1) {
+            state.selectedDecorations.splice(index, 1);
+            if (state.selectedDecoration === id) {
+                state.selectedDecoration = state.selectedDecorations[0] || null;
+            }
+        } else {
+            state.selectedDecorations.push(id);
+            state.selectedDecoration = id;
+        }
+    }
+
+    function selectDecorationRange(startId, endId) {
+        const currentDecos = getCurrentPageDecorations();
+        const startIndex = currentDecos.findIndex(d => d.id === startId);
+        const endIndex = currentDecos.findIndex(d => d.id === endId);
+        if (startIndex > -1 && endIndex > -1) {
+            const min = Math.min(startIndex, endIndex);
+            const max = Math.max(startIndex, endIndex);
+            state.selectedDecorations = currentDecos.slice(min, max + 1).map(d => d.id);
+            state.selectedDecoration = endId;
+        }
+    }
+
+    function clearDecorationSelection() {
+        state.selectedDecorations = [];
+        state.selectedDecoration = null;
+    }
+
+    function openDecorationProperties(id) {
+        const deco = getCurrentPageDecorations().find(d => d.id === id);
+        if (!deco) return;
+        
+        const tabBtns = document.querySelectorAll('.tab-btn');
+        tabBtns.forEach(btn => {
+            if (btn.dataset.tab === 'decorations') {
+                btn.click();
+            }
+        });
+        
+        setTimeout(() => {
+            const decoItems = document.querySelectorAll('.decoration-item');
+            decoItems.forEach((item, index) => {
+                const decos = getCurrentPageDecorations();
+                if (decos[index] && decos[index].id === id) {
+                    item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    item.style.boxShadow = '0 0 0 3px var(--macaron-brown), 0 0 20px rgba(139, 115, 85, 0.3)';
+                    setTimeout(() => {
+                        item.style.boxShadow = '';
+                    }, 1500);
+                }
+            });
+        }, 100);
+    }
+
     function setupDecorationDrag(el, deco) {
         let isDragging = false;
-        let startX, startY, startDecoX, startDecoY;
+        let startX, startY;
+        let startPositions = [];
+
+        function getDragStartPositions() {
+            const currentDecos = getCurrentPageDecorations();
+            if (state.selectedDecorations.length > 1 && state.selectedDecorations.includes(deco.id)) {
+                return state.selectedDecorations.map(id => {
+                    const d = currentDecos.find(dec => dec.id === id);
+                    return d ? { id, startX: d.x, startY: d.y } : null;
+                }).filter(Boolean);
+            }
+            return [{ id: deco.id, startX: deco.x, startY: deco.y }];
+        }
+
+        function applyEdgeSnap(x, y, size) {
+            if (!state.snapToEdge) return { x, y };
+            
+            const threshold = state.snapThreshold;
+            const canvasW = letterCanvas.width;
+            const canvasH = letterCanvas.height;
+            
+            let newX = x;
+            let newY = y;
+            
+            if (Math.abs(x) < threshold) newX = 0;
+            else if (Math.abs(x + size - canvasW) < threshold) newX = canvasW - size;
+            
+            if (Math.abs(y) < threshold) newY = 0;
+            else if (Math.abs(y + size - canvasH) < threshold) newY = canvasH - size;
+            
+            return { x: newX, y: newY };
+        }
+
+        function updatePositions(clientX, clientY) {
+            const rect = letterCanvas.getBoundingClientRect();
+            const scaleX = letterCanvas.width / rect.width;
+            const scaleY = letterCanvas.height / rect.height;
+            const deltaX = (clientX - startX) * scaleX;
+            const deltaY = (clientY - startY) * scaleY;
+            
+            const currentDecos = getCurrentPageDecorations();
+            
+            startPositions.forEach(pos => {
+                const d = currentDecos.find(dec => dec.id === pos.id);
+                if (d) {
+                    let newX = Math.max(0, Math.min(letterCanvas.width - d.size, pos.startX + deltaX));
+                    let newY = Math.max(0, Math.min(letterCanvas.height - d.size, pos.startY + deltaY));
+                    
+                    const snapped = applyEdgeSnap(newX, newY, d.size);
+                    d.x = snapped.x;
+                    d.y = snapped.y;
+                    
+                    const decEl = decorationLayer.querySelector(`[data-id="${d.id}"]`);
+                    if (decEl) {
+                        decEl.style.left = d.x + 'px';
+                        decEl.style.top = d.y + 'px';
+                    }
+                }
+            });
+        }
 
         el.addEventListener('mousedown', (e) => {
+            if (!state.selectedDecorations.includes(deco.id) && !e.ctrlKey && !e.metaKey) {
+                clearDecorationSelection();
+                state.selectedDecoration = deco.id;
+                state.selectedDecorations = [deco.id];
+                renderDecorations();
+            }
+            
             isDragging = true;
             startX = e.clientX;
             startY = e.clientY;
-            startDecoX = deco.x;
-            startDecoY = deco.y;
+            startPositions = getDragStartPositions();
             e.preventDefault();
         });
 
         document.addEventListener('mousemove', (e) => {
             if (!isDragging) return;
-            const rect = letterCanvas.getBoundingClientRect();
-            const scaleX = letterCanvas.width / rect.width;
-            const scaleY = letterCanvas.height / rect.height;
-            
-            deco.x = Math.max(0, Math.min(letterCanvas.width - deco.size, 
-                startDecoX + (e.clientX - startX) * scaleX));
-            deco.y = Math.max(0, Math.min(letterCanvas.height - deco.size, 
-                startDecoY + (e.clientY - startY) * scaleY));
-            
-            el.style.left = deco.x + 'px';
-            el.style.top = deco.y + 'px';
+            updatePositions(e.clientX, e.clientY);
         });
 
         document.addEventListener('mouseup', () => {
@@ -1730,28 +1915,24 @@
 
         el.addEventListener('touchstart', (e) => {
             if (e.touches.length === 1) {
+                if (!state.selectedDecorations.includes(deco.id)) {
+                    clearDecorationSelection();
+                    state.selectedDecoration = deco.id;
+                    state.selectedDecorations = [deco.id];
+                    renderDecorations();
+                }
+                
                 isDragging = true;
                 startX = e.touches[0].clientX;
                 startY = e.touches[0].clientY;
-                startDecoX = deco.x;
-                startDecoY = deco.y;
+                startPositions = getDragStartPositions();
                 e.preventDefault();
             }
         });
 
         document.addEventListener('touchmove', (e) => {
             if (!isDragging || e.touches.length !== 1) return;
-            const rect = letterCanvas.getBoundingClientRect();
-            const scaleX = letterCanvas.width / rect.width;
-            const scaleY = letterCanvas.height / rect.height;
-            
-            deco.x = Math.max(0, Math.min(letterCanvas.width - deco.size, 
-                startDecoX + (e.touches[0].clientX - startX) * scaleX));
-            deco.y = Math.max(0, Math.min(letterCanvas.height - deco.size, 
-                startDecoY + (e.touches[0].clientY - startY) * scaleY));
-            
-            el.style.left = deco.x + 'px';
-            el.style.top = deco.y + 'px';
+            updatePositions(e.touches[0].clientX, e.touches[0].clientY);
         });
 
         document.addEventListener('touchend', () => {
@@ -1767,6 +1948,7 @@
         const list = document.getElementById('decoration-list');
         const currentDecos = getCurrentPageDecorations();
         const totalPages = getTotalPages();
+        const selectedCount = state.selectedDecorations.length;
         
         let pageSelectorHtml = '';
         if (totalPages > 1) {
@@ -1778,6 +1960,37 @@
                             `<button class="page-tab-btn ${i === state.currentPage ? 'active' : ''}" data-page="${i}">第 ${i + 1} 页</button>`
                         ).join('')}
                     </div>
+                </div>
+            `;
+        }
+
+        let batchActionsHtml = '';
+        if (currentDecos.length > 0) {
+            batchActionsHtml = `
+                <div class="batch-actions">
+                    <div class="batch-info">
+                        <span class="selected-count">已选 ${selectedCount} 个</span>
+                        <label class="select-all-label">
+                            <input type="checkbox" id="select-all-decorations" ${selectedCount === currentDecos.length ? 'checked' : ''}>
+                            全选
+                        </label>
+                    </div>
+                    <div class="batch-buttons">
+                        <button class="btn-batch" data-action="bringToFront" ${selectedCount === 0 ? 'disabled' : ''}>⬆️ 置顶</button>
+                        <button class="btn-batch" data-action="sendToBack" ${selectedCount === 0 ? 'disabled' : ''}>⬇️ 置底</button>
+                        <button class="btn-batch btn-batch-delete" data-action="deleteSelected" ${selectedCount === 0 ? 'disabled' : ''}>🗑️ 删除选中</button>
+                    </div>
+                </div>
+                <div class="snap-toggle">
+                    <label>
+                        <input type="checkbox" id="snap-to-edge" ${state.snapToEdge ? 'checked' : ''}>
+                        拖拽自动吸附页边
+                    </label>
+                    <label class="snap-threshold-label">
+                        吸附范围:
+                        <input type="range" id="snap-threshold" min="5" max="30" value="${state.snapThreshold}" style="width: 80px;">
+                        <span id="snap-threshold-value">${state.snapThreshold}px</span>
+                    </label>
                 </div>
             `;
         }
@@ -1796,27 +2009,35 @@
             return;
         }
 
-        list.innerHTML = pageSelectorHtml;
+        list.innerHTML = pageSelectorHtml + batchActionsHtml;
         
         currentDecos.forEach(deco => {
             const item = document.createElement('div');
-            item.className = 'decoration-item';
+            const isSelected = state.selectedDecorations.includes(deco.id);
+            item.className = 'decoration-item' + (isSelected ? ' selected' : '');
+            item.dataset.id = deco.id;
 
+            const colorIndicator = deco.color 
+                ? `<span class="color-indicator" style="background-color: ${deco.color}; color: var(--text-dark);" title="${deco.colorName || ''}">●</span>` 
+                : '';
+
+            const previewStyle = deco.color ? `filter: drop-shadow(0 0 4px ${deco.color});` : '';
             const previewHtml = (deco.type === 'custom' && deco.imageData)
-                ? `<div class="deco-preview"><img src="${deco.imageData}" style="width:100%;height:100%;object-fit:contain;"></div>`
-                : `<div class="deco-preview">${deco.emoji}</div>`;
+                ? `<div class="deco-preview" style="${previewStyle}"><img src="${deco.imageData}" style="width:100%;height:100%;object-fit:contain;"></div>`
+                : `<div class="deco-preview" style="${previewStyle}${deco.color ? `color: ${deco.color};` : ''}">${deco.emoji}</div>`;
 
             item.innerHTML = `
+                <div class="deco-select">
+                    <input type="checkbox" class="deco-checkbox" data-id="${deco.id}" ${isSelected ? 'checked' : ''}>
+                </div>
                 ${previewHtml}
+                <div class="deco-info">
+                    <div class="deco-name">${deco.name}${colorIndicator}</div>
+                    <div class="deco-coords">位置: (${Math.round(deco.x)}, ${Math.round(deco.y)})</div>
+                </div>
                 <div class="deco-controls">
                     <div class="control-row">
-                        <label style="min-width:50px">透明度</label>
-                        <input type="range" min="0.1" max="1" step="0.1" value="${deco.opacity}" 
-                               data-id="${deco.id}" data-prop="opacity">
-                        <span>${deco.opacity.toFixed(1)}</span>
-                    </div>
-                    <div class="control-row">
-                        <label style="min-width:50px">大小</label>
+                        <label style="min-width:50px">缩放</label>
                         <input type="range" min="30" max="200" step="5" value="${deco.size}" 
                                data-id="${deco.id}" data-prop="size">
                         <span>${deco.size}px</span>
@@ -1827,8 +2048,16 @@
                                data-id="${deco.id}" data-prop="rotation">
                         <span>${deco.rotation}°</span>
                     </div>
+                    <div class="control-row">
+                        <label style="min-width:50px">透明度</label>
+                        <input type="range" min="0.1" max="1" step="0.1" value="${deco.opacity}" 
+                               data-id="${deco.id}" data-prop="opacity">
+                        <span>${deco.opacity.toFixed(1)}</span>
+                    </div>
                 </div>
                 <div class="deco-actions">
+                    <button class="btn-layer" data-action="bringToFront" data-id="${deco.id}" title="置顶">⬆️</button>
+                    <button class="btn-layer" data-action="sendToBack" data-id="${deco.id}" title="置底">⬇️</button>
                     <button class="btn-delete" data-id="${deco.id}">删除</button>
                 </div>
             `;
@@ -1838,6 +2067,64 @@
         list.querySelectorAll('.page-tab-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 goToPage(parseInt(btn.dataset.page));
+            });
+        });
+
+        const selectAllCheckbox = document.getElementById('select-all-decorations');
+        if (selectAllCheckbox) {
+            selectAllCheckbox.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    state.selectedDecorations = currentDecos.map(d => d.id);
+                    state.selectedDecoration = state.selectedDecorations[0] || null;
+                } else {
+                    clearDecorationSelection();
+                }
+                renderDecorations();
+                updateDecorationList();
+            });
+        }
+
+        const snapCheckbox = document.getElementById('snap-to-edge');
+        if (snapCheckbox) {
+            snapCheckbox.addEventListener('change', (e) => {
+                state.snapToEdge = e.target.checked;
+                saveToCache();
+            });
+        }
+
+        const snapThresholdInput = document.getElementById('snap-threshold');
+        if (snapThresholdInput) {
+            snapThresholdInput.addEventListener('input', (e) => {
+                state.snapThreshold = parseInt(e.target.value);
+                document.getElementById('snap-threshold-value').textContent = state.snapThreshold + 'px';
+                saveToCache();
+            });
+        }
+
+        list.querySelectorAll('.deco-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => {
+                e.stopPropagation();
+                const id = parseInt(e.target.dataset.id);
+                toggleDecorationSelection(id);
+                renderDecorations();
+                updateDecorationList();
+            });
+        });
+
+        list.querySelectorAll('.decoration-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                if (!e.target.closest('input') && !e.target.closest('button')) {
+                    const id = parseInt(item.dataset.id);
+                    if (e.ctrlKey || e.metaKey) {
+                        toggleDecorationSelection(id);
+                    } else {
+                        clearDecorationSelection();
+                        state.selectedDecoration = id;
+                        state.selectedDecorations = [id];
+                    }
+                    renderDecorations();
+                    updateDecorationList();
+                }
             });
         });
 
@@ -1858,20 +2145,100 @@
             });
         });
 
-        list.querySelectorAll('.btn-delete').forEach(btn => {
+        list.querySelectorAll('.btn-layer').forEach(btn => {
             btn.addEventListener('click', (e) => {
-                const id = parseInt(e.target.dataset.id);
-                const decos = getCurrentPageDecorations();
-                const newDecos = decos.filter(d => d.id !== id);
-                setCurrentPageDecorations(newDecos);
-                if (state.selectedDecoration === id) {
-                    state.selectedDecoration = null;
+                e.stopPropagation();
+                const action = btn.dataset.action;
+                const id = parseInt(btn.dataset.id);
+                if (action === 'bringToFront') {
+                    bringToFront(id);
+                } else if (action === 'sendToBack') {
+                    sendToBack(id);
                 }
-                renderDecorations();
-                updateDecorationList();
-                saveToCache();
             });
         });
+
+        list.querySelectorAll('.btn-delete').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = parseInt(btn.dataset.id);
+                deleteDecorations([id]);
+            });
+        });
+
+        list.querySelectorAll('.btn-batch').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const action = btn.dataset.action;
+                if (state.selectedDecorations.length === 0) return;
+                
+                if (action === 'deleteSelected') {
+                    showConfirmModal({
+                        title: '批量删除',
+                        message: `确定要删除选中的 ${state.selectedDecorations.length} 个装饰吗？`,
+                        confirmText: '删除',
+                        onConfirm: () => deleteDecorations(state.selectedDecorations)
+                    });
+                } else if (action === 'bringToFront') {
+                    bringToFront(state.selectedDecorations);
+                } else if (action === 'sendToBack') {
+                    sendToBack(state.selectedDecorations);
+                }
+            });
+        });
+    }
+
+    function bringToFront(ids) {
+        const idArray = Array.isArray(ids) ? ids : [ids];
+        const decos = getCurrentPageDecorations();
+        let maxZ = Math.max(...decos.map(d => d.zIndex || 0));
+        
+        idArray.forEach(id => {
+            const deco = decos.find(d => d.id === id);
+            if (deco) {
+                maxZ++;
+                deco.zIndex = maxZ;
+            }
+        });
+        
+        setCurrentPageDecorations(decos);
+        renderDecorations();
+        updateDecorationList();
+        saveToCache();
+    }
+
+    function sendToBack(ids) {
+        const idArray = Array.isArray(ids) ? ids : [ids];
+        const decos = getCurrentPageDecorations();
+        let minZ = Math.min(...decos.map(d => d.zIndex || 0));
+        
+        idArray.forEach(id => {
+            const deco = decos.find(d => d.id === id);
+            if (deco) {
+                minZ--;
+                deco.zIndex = minZ;
+            }
+        });
+        
+        setCurrentPageDecorations(decos);
+        renderDecorations();
+        updateDecorationList();
+        saveToCache();
+    }
+
+    function deleteDecorations(ids) {
+        const decos = getCurrentPageDecorations();
+        const newDecos = decos.filter(d => !ids.includes(d.id));
+        setCurrentPageDecorations(newDecos);
+        
+        state.selectedDecorations = state.selectedDecorations.filter(id => !ids.includes(id));
+        if (ids.includes(state.selectedDecoration)) {
+            state.selectedDecoration = state.selectedDecorations[0] || null;
+        }
+        
+        renderDecorations();
+        updateDecorationList();
+        saveToCache();
     }
 
     function renderEnvelope() {
@@ -2642,9 +3009,29 @@
     }
 
     document.addEventListener('click', (e) => {
-        if (!e.target.closest('.decoration') && !e.target.closest('.decoration-item')) {
-            state.selectedDecoration = null;
+        if (!e.target.closest('.decoration') && !e.target.closest('.decoration-item') && !e.target.closest('.deco-type-btn') && !e.target.closest('.color-option') && !e.target.closest('#add-decoration-btn')) {
+            clearDecorationSelection();
             renderDecorations();
+            updateDecorationList();
+        }
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+            if (state.selectedDecorations.length > 0 && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+                e.preventDefault();
+                showConfirmModal({
+                    title: '删除装饰',
+                    message: `确定要删除选中的 ${state.selectedDecorations.length} 个装饰吗？`,
+                    confirmText: '删除',
+                    onConfirm: () => deleteDecorations(state.selectedDecorations)
+                });
+            }
+        }
+        if (e.key === 'Escape') {
+            clearDecorationSelection();
+            renderDecorations();
+            updateDecorationList();
         }
     });
 
