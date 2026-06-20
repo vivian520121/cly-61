@@ -536,10 +536,6 @@
             if (e.key === 'Enter') handleConfirm();
         };
 
-        const handleOverlayClick = (e) => {
-            if (e.target === modal) handleCancel();
-        };
-
         const closeModal = () => {
             modal.classList.remove('active');
             state.editingFolderId = null;
@@ -550,13 +546,11 @@
             confirmBtn.removeEventListener('click', handleConfirm);
             cancelBtn.removeEventListener('click', handleCancel);
             document.removeEventListener('keydown', handleKeydown);
-            modal.removeEventListener('click', handleOverlayClick);
         };
 
         confirmBtn.addEventListener('click', handleConfirm);
         cancelBtn.addEventListener('click', handleCancel);
         document.addEventListener('keydown', handleKeydown);
-        modal.addEventListener('click', handleOverlayClick);
     }
 
     function showMoveFolderModal(draftIds) {
@@ -607,10 +601,6 @@
             if (e.key === 'Escape') handleCancel();
         };
 
-        const handleOverlayClick = (e) => {
-            if (e.target === modal) handleCancel();
-        };
-
         const closeModal = () => {
             modal.classList.remove('active');
             state.movePendingDraftIds = [];
@@ -620,12 +610,10 @@
         const cleanup = () => {
             cancelBtn.removeEventListener('click', handleCancel);
             document.removeEventListener('keydown', handleKeydown);
-            modal.removeEventListener('click', handleOverlayClick);
         };
 
         cancelBtn.addEventListener('click', handleCancel);
         document.addEventListener('keydown', handleKeydown);
-        modal.addEventListener('click', handleOverlayClick);
     }
 
     function getDraftContentFromState() {
@@ -1105,21 +1093,15 @@
             if (e.key === 'Enter') handleConfirm();
         };
 
-        const handleOverlayClick = (e) => {
-            if (e.target === modal) handleCancel();
-        };
-
         const cleanup = () => {
             confirmBtn.removeEventListener('click', handleConfirm);
             cancelBtn.removeEventListener('click', handleCancel);
             document.removeEventListener('keydown', handleKeydown);
-            modal.removeEventListener('click', handleOverlayClick);
         };
 
         confirmBtn.addEventListener('click', handleConfirm);
         cancelBtn.addEventListener('click', handleCancel);
         document.addEventListener('keydown', handleKeydown);
-        modal.addEventListener('click', handleOverlayClick);
     }
 
     function showRenameModal(draftId) {
@@ -1154,10 +1136,6 @@
             if (e.key === 'Enter') handleConfirm();
         };
 
-        const handleOverlayClick = (e) => {
-            if (e.target === modal) handleCancel();
-        };
-
         const closeModal = () => {
             modal.classList.remove('active');
             pendingRenameDraftId = null;
@@ -1168,13 +1146,11 @@
             confirmBtn.removeEventListener('click', handleConfirm);
             cancelBtn.removeEventListener('click', handleCancel);
             document.removeEventListener('keydown', handleKeydown);
-            modal.removeEventListener('click', handleOverlayClick);
         };
 
         confirmBtn.addEventListener('click', handleConfirm);
         cancelBtn.addEventListener('click', handleCancel);
         document.addEventListener('keydown', handleKeydown);
-        modal.addEventListener('click', handleOverlayClick);
     }
 
     function saveDraftsToStorage() {
