@@ -2073,6 +2073,7 @@
         const selectAllCheckbox = document.getElementById('select-all-decorations');
         if (selectAllCheckbox) {
             selectAllCheckbox.addEventListener('change', (e) => {
+                e.stopPropagation();
                 if (e.target.checked) {
                     state.selectedDecorations = currentDecos.map(d => d.id);
                     state.selectedDecoration = state.selectedDecorations[0] || null;
@@ -2087,6 +2088,7 @@
         const snapCheckbox = document.getElementById('snap-to-edge');
         if (snapCheckbox) {
             snapCheckbox.addEventListener('change', (e) => {
+                e.stopPropagation();
                 state.snapToEdge = e.target.checked;
                 saveToCache();
             });
@@ -2095,6 +2097,7 @@
         const snapThresholdInput = document.getElementById('snap-threshold');
         if (snapThresholdInput) {
             snapThresholdInput.addEventListener('input', (e) => {
+                e.stopPropagation();
                 state.snapThreshold = parseInt(e.target.value);
                 document.getElementById('snap-threshold-value').textContent = state.snapThreshold + 'px';
                 saveToCache();
@@ -3009,7 +3012,7 @@
     }
 
     document.addEventListener('click', (e) => {
-        if (!e.target.closest('.decoration') && !e.target.closest('.decoration-item') && !e.target.closest('.deco-type-btn') && !e.target.closest('.color-option') && !e.target.closest('#add-decoration-btn')) {
+        if (!e.target.closest('.decoration') && !e.target.closest('.decoration-item') && !e.target.closest('.deco-type-btn') && !e.target.closest('.color-option') && !e.target.closest('#add-decoration-btn') && !e.target.closest('.decoration-manager')) {
             clearDecorationSelection();
             renderDecorations();
             updateDecorationList();
