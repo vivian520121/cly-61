@@ -21,10 +21,31 @@
                         <button id="new-draft" class="btn-primary">✏️ 新建草稿</button>
                         <button id="clear-all-drafts" class="btn-danger">🗑️ 清空全部</button>
                     </div>
+                    <div class="folder-section">
+                        <div class="folder-header">
+                            <span class="folder-title">📂 分类文件夹</span>
+                            <button id="add-folder" class="btn-add-folder" title="新建分类">➕</button>
+                        </div>
+                        <div id="folder-list" class="folder-list"></div>
+                    </div>
                     <div class="draft-filter">
                         <label>
                             <input type="checkbox" id="show-archived"> 显示已归档
                         </label>
+                    </div>
+                    <div id="batch-actions" class="batch-actions-drafts" style="display:none;">
+                        <div class="batch-info-drafts">
+                            <span class="selected-count-drafts">已选 0 份</span>
+                            <label class="select-all-label-drafts">
+                                <input type="checkbox" id="select-all-drafts"> 全选
+                            </label>
+                        </div>
+                        <div class="batch-buttons-drafts">
+                            <button id="batch-archive" class="btn-batch-draft" disabled>📦 批量归档</button>
+                            <button id="batch-export" class="btn-batch-draft" disabled>📤 批量导出</button>
+                            <button id="batch-move" class="btn-batch-draft" disabled>📂 移动到</button>
+                            <button id="batch-cancel" class="btn-batch-draft btn-batch-cancel">取消选择</button>
+                        </div>
                     </div>
                     <div id="draft-list" class="draft-list"></div>
                 </div>
@@ -262,6 +283,55 @@
             <div class="modal-actions">
                 <button id="rename-cancel" class="btn-secondary">取消</button>
                 <button id="rename-confirm" class="btn-primary">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="folder-modal" class="modal-overlay">
+        <div class="modal-dialog">
+            <h3 id="folder-modal-title">新建分类</h3>
+            <div class="folder-icon-picker">
+                <span class="folder-icon-label">选择图标：</span>
+                <div class="folder-icon-options">
+                    <button class="folder-icon-option active" data-icon="💌">💌</button>
+                    <button class="folder-icon-option" data-icon="🏠">🏠</button>
+                    <button class="folder-icon-option" data-icon="💕">💕</button>
+                    <button class="folder-icon-option" data-icon="📝">📝</button>
+                    <button class="folder-icon-option" data-icon="🎁">🎁</button>
+                    <button class="folder-icon-option" data-icon="🌸">🌸</button>
+                    <button class="folder-icon-option" data-icon="🎨">🎨</button>
+                    <button class="folder-icon-option" data-icon="📚">📚</button>
+                    <button class="folder-icon-option" data-icon="⭐">⭐</button>
+                    <button class="folder-icon-option" data-icon="🌙">🌙</button>
+                </div>
+            </div>
+            <input type="text" id="folder-name-input" placeholder="请输入分类名称" maxlength="10">
+            <div class="folder-color-picker">
+                <span class="folder-color-label">选择颜色：</span>
+                <div class="folder-color-options">
+                    <button class="folder-color-option active" data-color="pink" style="background: var(--macaron-pink);"></button>
+                    <button class="folder-color-option" data-color="peach" style="background: var(--macaron-peach);"></button>
+                    <button class="folder-color-option" data-color="yellow" style="background: var(--macaron-yellow);"></button>
+                    <button class="folder-color-option" data-color="green" style="background: var(--macaron-green);"></button>
+                    <button class="folder-color-option" data-color="blue" style="background: var(--macaron-blue);"></button>
+                    <button class="folder-color-option" data-color="purple" style="background: var(--macaron-purple);"></button>
+                    <button class="folder-color-option" data-color="cream" style="background: var(--macaron-cream);"></button>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button id="folder-cancel" class="btn-secondary">取消</button>
+                <button id="folder-confirm" class="btn-primary">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="move-folder-modal" class="modal-overlay">
+        <div class="modal-dialog">
+            <h3 id="move-folder-title">移动到文件夹</h3>
+            <p id="move-folder-desc" style="margin-bottom: 16px; color: var(--text-light);">选择目标文件夹：</p>
+            <div id="move-folder-list" class="move-folder-list"></div>
+            <div class="modal-actions">
+                <button id="move-folder-cancel" class="btn-secondary">取消</button>
             </div>
         </div>
     </div>

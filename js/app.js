@@ -31,7 +31,14 @@
         snapToEdge: true,
         snapThreshold: 10,
         currentDecoType: 'flower',
-        currentDecoColor: null
+        currentDecoColor: null,
+        folders: [],
+        currentFolderId: null,
+        selectedDraftIds: [],
+        pendingFolderIcon: '💌',
+        pendingFolderColor: 'pink',
+        editingFolderId: null,
+        movePendingDraftIds: []
     };
 
     let pendingRenameDraftId = null;
@@ -65,6 +72,548 @@
             hour: '2-digit',
             minute: '2-digit'
         });
+    }
+
+    function generateFolderId() {
+        return 'folder_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    const DEFAULT_FOLDERS = [
+        { id: 'default_jiashu', name: '家书', icon: '🏠', color: 'peach', isDefault: true },
+        { id: 'default_qingshu', name: '情书', icon: '💕', color: 'pink', isDefault: true },
+        { id: 'default_suibi', name: '随笔', icon: '📝', color: 'green', isDefault: true },
+        { id: 'default_heka', name: '贺卡', icon: '🎁', color: 'yellow', isDefault: true }
+    ];
+
+    const FOLDER_COLOR_MAP = {
+        pink: '#f5d5d5',
+        peach: '#fce4d6',
+        yellow: '#fff4d6',
+        green: '#d6e8d5',
+        blue: '#d5e5f5',
+        purple: '#e8d5f5',
+        cream: '#fdf8f2'
+    };
+
+    function initFolders() {
+        if (state.folders.length === 0) {
+            state.folders = JSON.parse(JSON.stringify(DEFAULT_FOLDERS));
+        }
+    }
+
+    function saveFoldersToStorage() {
+        try {
+            localStorage.setItem('letterFolders', JSON.stringify(state.folders));
+            localStorage.setItem('currentFolderId', state.currentFolderId || '');
+        } catch (e) {
+            console.warn('无法保存文件夹到本地存储:', e);
+        }
+    }
+
+    function loadFoldersFromStorage() {
+        try {
+            const savedFolders = localStorage.getItem('letterFolders');
+            const savedCurrentFolderId = localStorage.getItem('currentFolderId');
+
+            if (savedFolders) {
+                state.folders = JSON.parse(savedFolders);
+            }
+            if (savedCurrentFolderId) {
+                state.currentFolderId = savedCurrentFolderId || null;
+            }
+            initFolders();
+        } catch (e) {
+            console.warn('无法从本地存储加载文件夹:', e);
+            initFolders();
+        }
+    }
+
+    function createFolder(name, icon, color) {
+        const newFolder = {
+            id: generateFolderId(),
+            name: name.trim(),
+            icon: icon,
+            color: color,
+            isDefault: false
+        };
+        state.folders.push(newFolder);
+        saveFoldersToStorage();
+        renderFolderList();
+    }
+
+    function updateFolder(folderId, name, icon, color) {
+        const folder = state.folders.find(f => f.id === folderId);
+        if (!folder) return;
+        folder.name = name.trim();
+        folder.icon = icon;
+        folder.color = color;
+        saveFoldersToStorage();
+        renderFolderList();
+    }
+
+    function deleteFolder(folderId) {
+        state.folders = state.folders.filter(f => f.id !== folderId);
+        state.drafts.forEach(draft => {
+            if (draft.folderId === folderId) {
+                draft.folderId = null;
+            }
+        });
+        if (state.currentFolderId === folderId) {
+            state.currentFolderId = null;
+        }
+        saveFoldersToStorage();
+        saveDraftsToStorage();
+        renderFolderList();
+        renderDraftList();
+    }
+
+    function getFolderById(folderId) {
+        return state.folders.find(f => f.id === folderId);
+    }
+
+    function getFolderDraftsCount(folderId) {
+        return state.drafts.filter(d => d.folderId === folderId && (state.showArchived || !d.isArchived)).length;
+    }
+
+    function moveDraftsToFolder(draftIds, folderId) {
+        draftIds.forEach(draftId => {
+            const draft = state.drafts.find(d => d.id === draftId);
+            if (draft) {
+                draft.folderId = folderId;
+                draft.updatedAt = Date.now();
+            }
+        });
+        saveDraftsToStorage();
+        renderFolderList();
+        renderDraftList();
+    }
+
+    function toggleDraftSelection(draftId) {
+        const index = state.selectedDraftIds.indexOf(draftId);
+        if (index > -1) {
+            state.selectedDraftIds.splice(index, 1);
+        } else {
+            state.selectedDraftIds.push(draftId);
+        }
+        updateBatchActionsUI();
+    }
+
+    function selectAllDrafts() {
+        let filteredDrafts = state.drafts;
+        if (state.currentFolderId) {
+            filteredDrafts = filteredDrafts.filter(d => d.folderId === state.currentFolderId);
+        } else {
+            filteredDrafts = filteredDrafts.filter(d => !d.folderId);
+        }
+        if (!state.showArchived) {
+            filteredDrafts = filteredDrafts.filter(d => !d.isArchived);
+        }
+        const allIds = filteredDrafts.map(d => d.id);
+        const allSelected = allIds.every(id => state.selectedDraftIds.includes(id));
+        
+        if (allSelected) {
+            state.selectedDraftIds = [];
+        } else {
+            state.selectedDraftIds = allIds;
+        }
+        updateBatchActionsUI();
+        renderDraftList();
+    }
+
+    function clearDraftSelection() {
+        state.selectedDraftIds = [];
+        updateBatchActionsUI();
+        renderDraftList();
+    }
+
+    function updateBatchActionsUI() {
+        const batchActionsEl = document.getElementById('batch-actions');
+        const countEl = document.querySelector('.selected-count-drafts');
+        const selectAllCheckbox = document.getElementById('select-all-drafts');
+        const archiveBtn = document.getElementById('batch-archive');
+        const exportBtn = document.getElementById('batch-export');
+        const moveBtn = document.getElementById('batch-move');
+
+        if (!batchActionsEl) return;
+
+        const selectedCount = state.selectedDraftIds.length;
+
+        if (selectedCount > 0) {
+            batchActionsEl.style.display = 'block';
+        } else {
+            batchActionsEl.style.display = 'none';
+        }
+
+        if (countEl) countEl.textContent = `已选 ${selectedCount} 份`;
+        if (selectAllCheckbox) {
+            let filteredDrafts = state.drafts;
+            if (state.currentFolderId) {
+                filteredDrafts = filteredDrafts.filter(d => d.folderId === state.currentFolderId);
+            } else {
+                filteredDrafts = filteredDrafts.filter(d => !d.folderId);
+            }
+            if (!state.showArchived) {
+                filteredDrafts = filteredDrafts.filter(d => !d.isArchived);
+            }
+            selectAllCheckbox.checked = filteredDrafts.length > 0 && 
+                filteredDrafts.every(d => state.selectedDraftIds.includes(d.id));
+        }
+        if (archiveBtn) archiveBtn.disabled = selectedCount === 0;
+        if (exportBtn) exportBtn.disabled = selectedCount === 0;
+        if (moveBtn) moveBtn.disabled = selectedCount === 0;
+    }
+
+    function batchArchiveDrafts(draftIds) {
+        const allArchived = draftIds.every(id => {
+            const draft = state.drafts.find(d => d.id === id);
+            return draft && draft.isArchived;
+        });
+        draftIds.forEach(draftId => {
+            const draft = state.drafts.find(d => d.id === draftId);
+            if (draft) {
+                draft.isArchived = !allArchived;
+                draft.updatedAt = Date.now();
+            }
+        });
+        saveDraftsToStorage();
+        clearDraftSelection();
+        renderDraftList();
+
+        if (!state.showArchived && !allArchived) {
+            if (state.currentDraftId && draftIds.includes(state.currentDraftId)) {
+                const firstActiveDraft = state.drafts.find(d => !d.isArchived && 
+                    (state.currentFolderId ? d.folderId === state.currentFolderId : !d.folderId));
+                if (firstActiveDraft) {
+                    switchDraft(firstActiveDraft.id);
+                } else {
+                    createDraft();
+                }
+            }
+        }
+    }
+
+    async function batchExportDrafts(draftIds) {
+        const originalDraftId = state.currentDraftId;
+        const originalContent = getDraftContentFromState();
+
+        for (let i = 0; i < draftIds.length; i++) {
+            const draftId = draftIds[i];
+            const draft = state.drafts.find(d => d.id === draftId);
+            if (!draft) continue;
+
+            applyDraftContentToState(draft.content);
+
+            const exportCanvas = document.createElement('canvas');
+            const scale = state.exportScale;
+            exportCanvas.width = letterCanvas.width * scale;
+            exportCanvas.height = letterCanvas.height * scale;
+            const ctx = exportCanvas.getContext('2d');
+            ctx.scale(scale, scale);
+
+            if (!state.transparentBg) {
+                ctx.fillStyle = '#fffef8';
+                ctx.fillRect(0, 0, letterCanvas.width, letterCanvas.height);
+            }
+
+            drawPaperBackgroundForExport(ctx);
+            if (state.currentMode === 'text' && state.letterContent) {
+                const pages = calculatePages();
+                if (pages.length > 0) {
+                    drawHandwrittenTextForExport(ctx, pages[0]);
+                }
+            }
+
+            const firstPageDecos = state.pageDecorations['0'] || [];
+            const firstPageDrawings = state.pageDrawingPaths['0'] || [];
+
+            firstPageDrawings.forEach(path => {
+                if (path.length < 2) return;
+                ctx.strokeStyle = path[0].color;
+                ctx.lineWidth = path[0].size;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.beginPath();
+                ctx.moveTo(path[0].x, path[0].y);
+                for (let j = 1; j < path.length; j++) {
+                    ctx.lineTo(path[j].x, path[j].y);
+                }
+                ctx.stroke();
+            });
+
+            for (const deco of firstPageDecos) {
+                ctx.save();
+                ctx.globalAlpha = deco.opacity;
+                ctx.translate(deco.x + deco.size / 2, deco.y + deco.size / 2);
+                ctx.rotate(deco.rotation * Math.PI / 180);
+                if (deco.type === 'custom' && deco.imageData) {
+                    try {
+                        const img = await loadImage(deco.imageData);
+                        ctx.drawImage(img, -deco.size / 2, -deco.size / 2, deco.size, deco.size);
+                    } catch (e) {
+                        console.warn('加载装饰图片失败:', e);
+                    }
+                } else {
+                    ctx.font = (deco.size * 0.9) + 'px serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(deco.emoji, 0, 0);
+                }
+                ctx.restore();
+            }
+
+            const link = document.createElement('a');
+            link.download = `${draft.name}_${Date.now()}.png`;
+            link.href = exportCanvas.toDataURL('image/png');
+            link.click();
+
+            await new Promise(resolve => setTimeout(resolve, 300));
+        }
+
+        if (originalDraftId) {
+            const originalDraft = state.drafts.find(d => d.id === originalDraftId);
+            if (originalDraft) {
+                applyDraftContentToState(originalContent);
+                loadDraft(originalDraftId);
+            }
+        }
+    }
+
+    function renderFolderList() {
+        const folderListEl = document.getElementById('folder-list');
+        if (!folderListEl) return;
+
+        const totalAllCount = state.drafts.filter(d => state.showArchived || !d.isArchived).length;
+
+        let html = `
+            <div class="folder-item ${state.currentFolderId === null ? 'active' : ''}" data-id="" title="全部草稿">
+                <div class="folder-icon" style="background: var(--macaron-cream);">📋</div>
+                <div class="folder-info">
+                    <span class="folder-name">全部草稿</span>
+                    <span class="folder-count">${totalAllCount}</span>
+                </div>
+            </div>
+            <div class="folder-item ${state.currentFolderId === 'uncategorized' ? 'active' : ''}" data-id="uncategorized" title="未分类">
+                <div class="folder-icon" style="background: var(--macaron-blue);">📄</div>
+                <div class="folder-info">
+                    <span class="folder-name">未分类</span>
+                    <span class="folder-count">${getFolderDraftsCount(null)}</span>
+                </div>
+            </div>
+        `;
+
+        html += state.folders.map(folder => {
+            const color = FOLDER_COLOR_MAP[folder.color] || FOLDER_COLOR_MAP.cream;
+            return `
+                <div class="folder-item ${state.currentFolderId === folder.id ? 'active' : ''}" 
+                     data-id="${folder.id}" 
+                     data-folder="true"
+                     title="${escapeHtml(folder.name)}">
+                    <div class="folder-icon" style="background: ${color};">${folder.icon}</div>
+                    <div class="folder-info">
+                        <span class="folder-name">${escapeHtml(folder.name)}</span>
+                        <span class="folder-count">${getFolderDraftsCount(folder.id)}</span>
+                    </div>
+                    ${!folder.isDefault ? `
+                        <div class="folder-item-actions">
+                            <button class="btn-folder-edit" data-action="edit" data-id="${folder.id}" title="编辑">✏️</button>
+                            <button class="btn-folder-delete" data-action="delete" data-id="${folder.id}" title="删除">🗑️</button>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }).join('');
+
+        folderListEl.innerHTML = html;
+
+        folderListEl.querySelectorAll('.folder-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                if (e.target.closest('.folder-item-actions button')) return;
+                const folderId = item.dataset.id;
+                state.currentFolderId = folderId === '' ? null : (folderId === 'uncategorized' ? null : folderId);
+                if (folderId === 'uncategorized') {
+                    state.currentFolderId = 'uncategorized';
+                }
+                state.selectedDraftIds = [];
+                updateBatchActionsUI();
+                saveFoldersToStorage();
+                renderFolderList();
+                renderDraftList();
+            });
+
+            item.addEventListener('dragover', (e) => {
+                if (!item.dataset.folder) return;
+                e.preventDefault();
+                item.classList.add('drag-over');
+            });
+
+            item.addEventListener('dragleave', (e) => {
+                item.classList.remove('drag-over');
+            });
+
+            item.addEventListener('drop', (e) => {
+                e.preventDefault();
+                item.classList.remove('drag-over');
+                if (!item.dataset.folder) return;
+                const draftId = e.dataTransfer.getData('text/plain');
+                if (draftId) {
+                    moveDraftsToFolder([draftId], item.dataset.id);
+                }
+            });
+        });
+
+        folderListEl.querySelectorAll('.folder-item-actions button').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const action = btn.dataset.action;
+                const folderId = btn.dataset.id;
+                if (action === 'edit') {
+                    showFolderModal(folderId);
+                } else if (action === 'delete') {
+                    const folder = getFolderById(folderId);
+                    showConfirmModal({
+                        title: '删除分类',
+                        message: `确定要删除分类"${folder.name}"吗？该分类下的草稿将变为未分类。`,
+                        confirmText: '删除',
+                        onConfirm: () => deleteFolder(folderId)
+                    });
+                }
+            });
+        });
+    }
+
+    function showFolderModal(folderId = null) {
+        const modal = document.getElementById('folder-modal');
+        const titleEl = document.getElementById('folder-modal-title');
+        const nameInput = document.getElementById('folder-name-input');
+        const confirmBtn = document.getElementById('folder-confirm');
+        const cancelBtn = document.getElementById('folder-cancel');
+
+        state.editingFolderId = folderId;
+
+        if (folderId) {
+            const folder = getFolderById(folderId);
+            titleEl.textContent = '编辑分类';
+            nameInput.value = folder.name;
+            state.pendingFolderIcon = folder.icon;
+            state.pendingFolderColor = folder.color;
+        } else {
+            titleEl.textContent = '新建分类';
+            nameInput.value = '';
+            state.pendingFolderIcon = '💌';
+            state.pendingFolderColor = 'pink';
+        }
+
+        document.querySelectorAll('.folder-icon-option').forEach(opt => {
+            opt.classList.toggle('active', opt.dataset.icon === state.pendingFolderIcon);
+        });
+        document.querySelectorAll('.folder-color-option').forEach(opt => {
+            opt.classList.toggle('active', opt.dataset.color === state.pendingFolderColor);
+        });
+
+        modal.classList.add('active');
+        setTimeout(() => nameInput.focus(), 100);
+
+        const handleConfirm = () => {
+            const name = nameInput.value.trim();
+            if (!name) {
+                nameInput.focus();
+                return;
+            }
+            if (state.editingFolderId) {
+                updateFolder(state.editingFolderId, name, state.pendingFolderIcon, state.pendingFolderColor);
+            } else {
+                createFolder(name, state.pendingFolderIcon, state.pendingFolderColor);
+            }
+            closeModal();
+        };
+
+        const handleCancel = () => {
+            closeModal();
+        };
+
+        const handleKeydown = (e) => {
+            if (e.key === 'Escape') handleCancel();
+            if (e.key === 'Enter') handleConfirm();
+        };
+
+        const closeModal = () => {
+            modal.classList.remove('active');
+            state.editingFolderId = null;
+            cleanup();
+        };
+
+        const cleanup = () => {
+            confirmBtn.removeEventListener('click', handleConfirm);
+            cancelBtn.removeEventListener('click', handleCancel);
+            document.removeEventListener('keydown', handleKeydown);
+        };
+
+        confirmBtn.addEventListener('click', handleConfirm);
+        cancelBtn.addEventListener('click', handleCancel);
+        document.addEventListener('keydown', handleKeydown);
+    }
+
+    function showMoveFolderModal(draftIds) {
+        const modal = document.getElementById('move-folder-modal');
+        const titleEl = document.getElementById('move-folder-title');
+        const descEl = document.getElementById('move-folder-desc');
+        const listEl = document.getElementById('move-folder-list');
+        const cancelBtn = document.getElementById('move-folder-cancel');
+
+        state.movePendingDraftIds = draftIds;
+        titleEl.textContent = draftIds.length > 1 ? `移动 ${draftIds.length} 份草稿` : '移动草稿';
+        descEl.textContent = `选择目标文件夹：`;
+
+        let html = `
+            <div class="move-folder-item" data-id="">
+                <div class="move-folder-icon" style="background: var(--macaron-blue);">📄</div>
+                <span class="move-folder-name">未分类</span>
+            </div>
+        `;
+
+        html += state.folders.map(folder => {
+            const color = FOLDER_COLOR_MAP[folder.color] || FOLDER_COLOR_MAP.cream;
+            return `
+                <div class="move-folder-item" data-id="${folder.id}">
+                    <div class="move-folder-icon" style="background: ${color};">${folder.icon}</div>
+                    <span class="move-folder-name">${escapeHtml(folder.name)}</span>
+                </div>
+            `;
+        }).join('');
+
+        listEl.innerHTML = html;
+
+        listEl.querySelectorAll('.move-folder-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const folderId = item.dataset.id || null;
+                moveDraftsToFolder(state.movePendingDraftIds, folderId);
+                closeModal();
+            });
+        });
+
+        modal.classList.add('active');
+
+        const handleCancel = () => {
+            closeModal();
+        };
+
+        const handleKeydown = (e) => {
+            if (e.key === 'Escape') handleCancel();
+        };
+
+        const closeModal = () => {
+            modal.classList.remove('active');
+            state.movePendingDraftIds = [];
+            cleanup();
+        };
+
+        const cleanup = () => {
+            cancelBtn.removeEventListener('click', handleCancel);
+            document.removeEventListener('keydown', handleKeydown);
+        };
+
+        cancelBtn.addEventListener('click', handleCancel);
+        document.addEventListener('keydown', handleKeydown);
     }
 
     function getDraftContentFromState() {
@@ -200,6 +749,7 @@
             createdAt: Date.now(),
             updatedAt: Date.now(),
             isArchived: false,
+            folderId: state.currentFolderId && state.currentFolderId !== 'uncategorized' ? state.currentFolderId : null,
             thumbnail: null,
             content: {
                 currentTemplate: 'line',
@@ -364,49 +914,111 @@
         if (!draftListEl) return;
 
         let filteredDrafts = state.drafts;
+        if (state.currentFolderId) {
+            if (state.currentFolderId === 'uncategorized') {
+                filteredDrafts = filteredDrafts.filter(d => !d.folderId);
+            } else {
+                filteredDrafts = filteredDrafts.filter(d => d.folderId === state.currentFolderId);
+            }
+        }
         if (!state.showArchived) {
-            filteredDrafts = state.drafts.filter(d => !d.isArchived);
+            filteredDrafts = filteredDrafts.filter(d => !d.isArchived);
         }
 
         if (filteredDrafts.length === 0) {
+            let emptyMsg = '暂无草稿，点击上方按钮新建';
+            if (state.currentFolderId) {
+                const folder = state.currentFolderId === 'uncategorized' ? null : getFolderById(state.currentFolderId);
+                const folderName = folder ? folder.name : '未分类';
+                emptyMsg = `"${folderName}"分类下暂无草稿<br>拖拽草稿到分类文件夹即可整理`;
+            } else if (!state.showArchived) {
+                emptyMsg += '<br>或勾选"显示已归档"查看归档草稿';
+            }
             draftListEl.innerHTML = `
                 <div class="draft-empty">
-                    ${state.showArchived ? '暂无草稿，点击上方按钮新建' : '暂无草稿，点击上方按钮新建<br>或勾选"显示已归档"查看归档草稿'}
+                    ${emptyMsg}
                 </div>
             `;
             return;
         }
 
-        draftListEl.innerHTML = filteredDrafts.map(draft => `
-            <div class="draft-item ${draft.id === state.currentDraftId ? 'active' : ''} ${draft.isArchived ? 'archived' : ''}" 
-                 data-id="${draft.id}">
-                <div class="draft-thumbnail">
-                    ${draft.thumbnail 
-                        ? `<img src="${draft.thumbnail}" alt="${draft.name}">`
-                        : '<div class="draft-thumbnail-placeholder">💌</div>'
-                    }
+        draftListEl.innerHTML = filteredDrafts.map(draft => {
+            const isSelected = state.selectedDraftIds.includes(draft.id);
+            const folder = draft.folderId ? getFolderById(draft.folderId) : null;
+            const folderBadge = folder ? `
+                <span class="draft-folder-badge" style="background: ${FOLDER_COLOR_MAP[folder.color] || FOLDER_COLOR_MAP.cream};">
+                    ${folder.icon} ${escapeHtml(folder.name)}
+                </span>
+            ` : '';
+            return `
+                <div class="draft-item ${draft.id === state.currentDraftId ? 'active' : ''} ${draft.isArchived ? 'archived' : ''} ${isSelected ? 'selected' : ''}" 
+                     data-id="${draft.id}"
+                     draggable="true">
+                    <div class="draft-select">
+                        <input type="checkbox" class="draft-checkbox" data-id="${draft.id}" ${isSelected ? 'checked' : ''}>
+                    </div>
+                    <div class="draft-thumbnail">
+                        ${draft.thumbnail 
+                            ? `<img src="${draft.thumbnail}" alt="${draft.name}">`
+                            : '<div class="draft-thumbnail-placeholder">💌</div>'
+                        }
+                    </div>
+                    <div class="draft-info">
+                        <div class="draft-name">${escapeHtml(draft.name)}${draft.isArchived ? ' 📦' : ''}</div>
+                        <div class="draft-date">${formatDate(draft.updatedAt)}</div>
+                        ${folderBadge}
+                    </div>
+                    <div class="draft-item-actions">
+                        <button class="btn-move" data-action="move" data-id="${draft.id}" title="移动到文件夹">📂</button>
+                        <button class="btn-rename" data-action="rename" data-id="${draft.id}" title="重命名">✏️</button>
+                        <button class="btn-archive" data-action="archive" data-id="${draft.id}" title="${draft.isArchived ? '取消归档' : '归档'}">
+                            ${draft.isArchived ? '📤' : '📦'}
+                        </button>
+                        <button class="btn-copy" data-action="copy" data-id="${draft.id}" title="复制">📋</button>
+                        <button class="btn-delete" data-action="delete" data-id="${draft.id}" title="删除">🗑️</button>
+                    </div>
                 </div>
-                <div class="draft-info">
-                    <div class="draft-name">${escapeHtml(draft.name)}${draft.isArchived ? ' 📦' : ''}</div>
-                    <div class="draft-date">${formatDate(draft.updatedAt)}</div>
-                </div>
-                <div class="draft-item-actions">
-                    <button class="btn-rename" data-action="rename" data-id="${draft.id}" title="重命名">✏️</button>
-                    <button class="btn-archive" data-action="archive" data-id="${draft.id}" title="${draft.isArchived ? '取消归档' : '归档'}">
-                        ${draft.isArchived ? '📤' : '📦'}
-                    </button>
-                    <button class="btn-copy" data-action="copy" data-id="${draft.id}" title="复制">📋</button>
-                    <button class="btn-delete" data-action="delete" data-id="${draft.id}" title="删除">🗑️</button>
-                </div>
-            </div>
-        `).join('');
+            `;
+        }).join('');
 
         draftListEl.querySelectorAll('.draft-item').forEach(item => {
             item.addEventListener('click', (e) => {
-                if (!e.target.closest('.draft-item-actions button')) {
-                    const draftId = item.dataset.id;
+                if (e.target.closest('.draft-item-actions button')) return;
+                if (e.target.closest('.draft-checkbox')) return;
+                
+                const draftId = item.dataset.id;
+                if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    toggleDraftSelection(draftId);
+                    renderDraftList();
+                } else if (state.selectedDraftIds.length > 0) {
+                    toggleDraftSelection(draftId);
+                    renderDraftList();
+                } else {
                     switchDraft(draftId);
                 }
+            });
+
+            item.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('text/plain', item.dataset.id);
+                e.dataTransfer.effectAllowed = 'move';
+                item.classList.add('dragging');
+            });
+
+            item.addEventListener('dragend', () => {
+                item.classList.remove('dragging');
+            });
+        });
+
+        draftListEl.querySelectorAll('.draft-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+            checkbox.addEventListener('change', (e) => {
+                e.stopPropagation();
+                const draftId = e.target.dataset.id;
+                toggleDraftSelection(draftId);
+                renderDraftList();
             });
         });
 
@@ -417,6 +1029,9 @@
                 const draftId = btn.dataset.id;
 
                 switch (action) {
+                    case 'move':
+                        showMoveFolderModal([draftId]);
+                        break;
                     case 'rename':
                         showRenameModal(draftId);
                         break;
@@ -920,13 +1535,16 @@
         bindEvents();
         
         loadCustomMaterials();
+        loadFoldersFromStorage();
         
         const hasDrafts = loadDraftsFromStorage();
         if (!hasDrafts) {
             createDraft();
         }
         
+        renderFolderList();
         renderDraftList();
+        updateBatchActionsUI();
         renderLetter();
         renderEnvelope();
         updateDecorationList();
@@ -1199,6 +1817,95 @@
             if (file) {
                 handleMaterialUpload(file);
                 e.target.value = '';
+            }
+        });
+
+        const addFolderBtn = document.getElementById('add-folder');
+        if (addFolderBtn) {
+            addFolderBtn.addEventListener('click', () => {
+                showFolderModal();
+            });
+        }
+
+        document.querySelectorAll('.folder-icon-option').forEach(opt => {
+            opt.addEventListener('click', () => {
+                document.querySelectorAll('.folder-icon-option').forEach(o => o.classList.remove('active'));
+                opt.classList.add('active');
+                state.pendingFolderIcon = opt.dataset.icon;
+            });
+        });
+
+        document.querySelectorAll('.folder-color-option').forEach(opt => {
+            opt.addEventListener('click', () => {
+                document.querySelectorAll('.folder-color-option').forEach(o => o.classList.remove('active'));
+                opt.classList.add('active');
+                state.pendingFolderColor = opt.dataset.color;
+            });
+        });
+
+        const selectAllDraftsCheckbox = document.getElementById('select-all-drafts');
+        if (selectAllDraftsCheckbox) {
+            selectAllDraftsCheckbox.addEventListener('change', (e) => {
+                e.stopPropagation();
+                selectAllDrafts();
+            });
+        }
+
+        const batchArchiveBtn = document.getElementById('batch-archive');
+        if (batchArchiveBtn) {
+            batchArchiveBtn.addEventListener('click', () => {
+                if (state.selectedDraftIds.length === 0) return;
+                const allArchived = state.selectedDraftIds.every(id => {
+                    const draft = state.drafts.find(d => d.id === id);
+                    return draft && draft.isArchived;
+                });
+                const action = allArchived ? '取消归档' : '归档';
+                showConfirmModal({
+                    title: `批量${action}`,
+                    message: `确定要${action}选中的 ${state.selectedDraftIds.length} 份草稿吗？`,
+                    confirmText: action,
+                    onConfirm: () => batchArchiveDrafts(state.selectedDraftIds)
+                });
+            });
+        }
+
+        const batchExportBtn = document.getElementById('batch-export');
+        if (batchExportBtn) {
+            batchExportBtn.addEventListener('click', () => {
+                if (state.selectedDraftIds.length === 0) return;
+                showConfirmModal({
+                    title: '批量导出',
+                    message: `确定要导出选中的 ${state.selectedDraftIds.length} 份草稿吗？`,
+                    confirmText: '导出',
+                    confirmClass: 'btn-primary',
+                    onConfirm: () => batchExportDrafts(state.selectedDraftIds)
+                });
+            });
+        }
+
+        const batchMoveBtn = document.getElementById('batch-move');
+        if (batchMoveBtn) {
+            batchMoveBtn.addEventListener('click', () => {
+                if (state.selectedDraftIds.length === 0) return;
+                showMoveFolderModal([...state.selectedDraftIds]);
+            });
+        }
+
+        const batchCancelBtn = document.getElementById('batch-cancel');
+        if (batchCancelBtn) {
+            batchCancelBtn.addEventListener('click', () => {
+                clearDraftSelection();
+            });
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && state.selectedDraftIds.length > 0) {
+                if (!document.getElementById('confirm-modal').classList.contains('active') &&
+                    !document.getElementById('rename-modal').classList.contains('active') &&
+                    !document.getElementById('folder-modal').classList.contains('active') &&
+                    !document.getElementById('move-folder-modal').classList.contains('active')) {
+                    clearDraftSelection();
+                }
             }
         });
 
