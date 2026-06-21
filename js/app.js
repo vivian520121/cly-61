@@ -14,6 +14,9 @@
         fontSize: 20,
         inkColor: '#3d3530',
         wobble: 2,
+        textAlign: 'left',
+        textIndent: true,
+        lineHeightMultiplier: 1.0,
         brushColor: '#3d3530',
         brushSize: 3,
         drawWobble: 1.5,
@@ -629,6 +632,9 @@
             fontSize: state.fontSize,
             inkColor: state.inkColor,
             wobble: state.wobble,
+            textAlign: state.textAlign,
+            textIndent: state.textIndent,
+            lineHeightMultiplier: state.lineHeightMultiplier,
             brushColor: state.brushColor,
             brushSize: state.brushSize,
             drawWobble: state.drawWobble,
@@ -653,6 +659,9 @@
         state.fontSize = content.fontSize || 20;
         state.inkColor = content.inkColor || '#3d3530';
         state.wobble = content.wobble || 2;
+        state.textAlign = content.textAlign || 'left';
+        state.textIndent = content.textIndent !== undefined ? content.textIndent : true;
+        state.lineHeightMultiplier = content.lineHeightMultiplier || 1.0;
         state.brushColor = content.brushColor || '#3d3530';
         state.brushSize = content.brushSize || 3;
         state.drawWobble = content.drawWobble || 1.5;
@@ -1266,6 +1275,12 @@
         document.getElementById('export-scale').value = state.exportScale;
         document.getElementById('keep-drafts').checked = state.keepDraftsOnClear;
         document.getElementById('show-archived').checked = state.showArchived;
+        document.getElementById('text-indent').checked = state.textIndent;
+        document.getElementById('line-height').value = state.lineHeightMultiplier;
+        document.getElementById('line-height-value').textContent = state.lineHeightMultiplier.toFixed(1) + 'x';
+        document.querySelectorAll('.align-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.align === state.textAlign);
+        });
     }
 
     const letterCanvas = document.getElementById('letter-canvas');
@@ -1619,6 +1634,29 @@
         document.getElementById('wobble').addEventListener('input', (e) => {
             state.wobble = parseFloat(e.target.value);
             document.getElementById('wobble-value').textContent = state.wobble;
+            renderLetter();
+            saveToCache();
+        });
+
+        document.querySelectorAll('.align-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.align-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                state.textAlign = btn.dataset.align;
+                renderLetter();
+                saveToCache();
+            });
+        });
+
+        document.getElementById('text-indent').addEventListener('change', (e) => {
+            state.textIndent = e.target.checked;
+            renderLetter();
+            saveToCache();
+        });
+
+        document.getElementById('line-height').addEventListener('input', (e) => {
+            state.lineHeightMultiplier = parseFloat(e.target.value);
+            document.getElementById('line-height-value').textContent = state.lineHeightMultiplier.toFixed(1) + 'x';
             renderLetter();
             saveToCache();
         });
@@ -2284,44 +2322,87 @@
     }
 
     function drawHorizontalText(lines, startX, startY, lineHeight, maxWidth, globalStartChar = 0) {
+        const effectiveLineHeight = lineHeight * state.lineHeightMultiplier;
+        const rightMargin = letterCanvas.width - 80;
         let y = startY;
         let isNewPage = globalStartChar > 0;
         
         lines.forEach((line, lineIndex) => {
             if (line.trim() === '') {
-                y += lineHeight;
+                y += effectiveLineHeight;
                 return;
             }
 
-            let x = startX;
-            let firstLine = (y === startY) && (lineIndex === 0 || isNewPage);
-            if (firstLine && state.currentTemplate !== 'vintage') {
-                x += state.fontSize * 2;
-            }
-
-            for (let i = 0; i < line.length; i++) {
-                const char = line[i];
-                const wobbleX = (Math.random() - 0.5) * state.wobble;
-                const wobbleY = (Math.random() - 0.5) * state.wobble;
-                const rotation = (Math.random() - 0.5) * (state.wobble * 0.05);
-
-                const charWidth = letterCtx.measureText(char).width;
+            const layoutLines = calculateLineLayout(line, startX, maxWidth, rightMargin, 
+                (y === startY) && (lineIndex === 0 || isNewPage));
+            
+            layoutLines.forEach(layoutLine => {
+                let x = layoutLine.startX;
                 
-                if (x + charWidth > letterCanvas.width - 80) {
-                    x = startX;
-                    y += lineHeight;
+                if (state.textAlign === 'center') {
+                    x = startX + (maxWidth - layoutLine.width) / 2;
+                } else if (state.textAlign === 'right') {
+                    x = rightMargin - layoutLine.width;
                 }
+                
+                layoutLine.chars.forEach(charInfo => {
+                    const wobbleX = (Math.random() - 0.5) * state.wobble;
+                    const wobbleY = (Math.random() - 0.5) * state.wobble;
+                    const rotation = (Math.random() - 0.5) * (state.wobble * 0.05);
 
-                letterCtx.save();
-                letterCtx.translate(x + wobbleX + charWidth / 2, y + wobbleY + state.fontSize / 2);
-                letterCtx.rotate(rotation);
-                letterCtx.fillText(char, -charWidth / 2, -state.fontSize / 2);
-                letterCtx.restore();
+                    letterCtx.save();
+                    letterCtx.translate(x + wobbleX + charInfo.width / 2, y + wobbleY + state.fontSize / 2);
+                    letterCtx.rotate(rotation);
+                    letterCtx.fillText(charInfo.char, -charInfo.width / 2, -state.fontSize / 2);
+                    letterCtx.restore();
 
-                x += charWidth + 1;
-            }
-            y += lineHeight;
+                    x += charInfo.width + 1;
+                });
+                
+                y += effectiveLineHeight;
+            });
         });
+    }
+
+    function calculateLineLayout(line, startX, maxWidth, rightMargin, isFirstLineOfParagraph, ctx = letterCtx) {
+        const layoutLines = [];
+        let currentLineChars = [];
+        let currentLineWidth = 0;
+        let currentX = startX;
+        
+        if (isFirstLineOfParagraph && state.textIndent && state.currentTemplate !== 'vintage') {
+            currentX += state.fontSize * 2;
+        }
+
+        for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+            const charWidth = ctx.measureText(char).width;
+            
+            if (currentX + charWidth > rightMargin && currentLineChars.length > 0) {
+                layoutLines.push({
+                    chars: currentLineChars,
+                    width: currentLineWidth,
+                    startX: startX
+                });
+                currentLineChars = [];
+                currentLineWidth = 0;
+                currentX = startX;
+            }
+
+            currentLineChars.push({ char, width: charWidth });
+            currentLineWidth += charWidth + 1;
+            currentX += charWidth + 1;
+        }
+
+        if (currentLineChars.length > 0) {
+            layoutLines.push({
+                chars: currentLineChars,
+                width: currentLineWidth - 1,
+                startX: startX
+            });
+        }
+
+        return layoutLines;
     }
 
     function drawVerticalText(lines, startX, startY, colWidth, globalStartChar = 0) {
@@ -3114,27 +3195,29 @@
     }
 
     function calculateHorizontalPages(lines, startX, startY, lineHeight, maxWidth) {
+        const effectiveLineHeight = lineHeight * state.lineHeightMultiplier;
         const pages = [];
         const maxY = letterCanvas.height - 80;
+        const rightMargin = letterCanvas.width - 80;
         let charIndex = 0;
         let currentPageStart = 0;
         let y = startY;
 
         lines.forEach((line, lineIndex) => {
             if (line.trim() === '') {
-                y += lineHeight;
+                y += effectiveLineHeight;
                 charIndex++;
                 if (y > maxY) {
                     pages.push({ startChar: currentPageStart, endChar: charIndex - 1 });
                     currentPageStart = charIndex - 1;
-                    y = startY + lineHeight;
+                    y = startY + effectiveLineHeight;
                 }
                 return;
             }
 
             let x = startX;
             let firstLine = (y === startY);
-            if (firstLine && state.currentTemplate !== 'vintage') {
+            if (firstLine && state.textIndent && state.currentTemplate !== 'vintage') {
                 x += state.fontSize * 2;
             }
 
@@ -3142,15 +3225,15 @@
                 const char = line[i];
                 const charWidth = letterCtx.measureText(char).width;
                 
-                if (x + charWidth > letterCanvas.width - 80) {
+                if (x + charWidth > rightMargin) {
                     x = startX;
-                    y += lineHeight;
+                    y += effectiveLineHeight;
                     if (y > maxY) {
                         pages.push({ startChar: currentPageStart, endChar: charIndex });
                         currentPageStart = charIndex;
                         y = startY;
                         firstLine = true;
-                        if (firstLine && state.currentTemplate !== 'vintage') {
+                        if (firstLine && state.textIndent && state.currentTemplate !== 'vintage') {
                             x += state.fontSize * 2;
                         }
                     }
@@ -3159,7 +3242,7 @@
                 x += charWidth + 1;
                 charIndex++;
             }
-            y += lineHeight;
+            y += effectiveLineHeight;
             charIndex++;
 
             if (y > maxY && lineIndex < lines.length - 1) {
@@ -3494,43 +3577,45 @@
     }
 
     function drawHorizontalTextOnCtx(ctx, lines, startX, startY, lineHeight, maxWidth, globalStartChar) {
+        const effectiveLineHeight = lineHeight * state.lineHeightMultiplier;
+        const rightMargin = letterCanvas.width - 80;
         let y = startY;
         let isNewPage = globalStartChar > 0;
         
         lines.forEach((line, lineIndex) => {
             if (line.trim() === '') {
-                y += lineHeight;
+                y += effectiveLineHeight;
                 return;
             }
 
-            let x = startX;
-            let firstLine = (y === startY) && (lineIndex === 0 || isNewPage);
-            if (firstLine && state.currentTemplate !== 'vintage') {
-                x += state.fontSize * 2;
-            }
-
-            for (let i = 0; i < line.length; i++) {
-                const char = line[i];
-                const wobbleX = (Math.random() - 0.5) * state.wobble;
-                const wobbleY = (Math.random() - 0.5) * state.wobble;
-                const rotation = (Math.random() - 0.5) * (state.wobble * 0.05);
-
-                const charWidth = ctx.measureText(char).width;
+            const layoutLines = calculateLineLayout(line, startX, maxWidth, rightMargin, 
+                (y === startY) && (lineIndex === 0 || isNewPage), ctx);
+            
+            layoutLines.forEach(layoutLine => {
+                let x = layoutLine.startX;
                 
-                if (x + charWidth > letterCanvas.width - 80) {
-                    x = startX;
-                    y += lineHeight;
+                if (state.textAlign === 'center') {
+                    x = startX + (maxWidth - layoutLine.width) / 2;
+                } else if (state.textAlign === 'right') {
+                    x = rightMargin - layoutLine.width;
                 }
+                
+                layoutLine.chars.forEach(charInfo => {
+                    const wobbleX = (Math.random() - 0.5) * state.wobble;
+                    const wobbleY = (Math.random() - 0.5) * state.wobble;
+                    const rotation = (Math.random() - 0.5) * (state.wobble * 0.05);
 
-                ctx.save();
-                ctx.translate(x + wobbleX + charWidth / 2, y + wobbleY + state.fontSize / 2);
-                ctx.rotate(rotation);
-                ctx.fillText(char, -charWidth / 2, -state.fontSize / 2);
-                ctx.restore();
+                    ctx.save();
+                    ctx.translate(x + wobbleX + charInfo.width / 2, y + wobbleY + state.fontSize / 2);
+                    ctx.rotate(rotation);
+                    ctx.fillText(charInfo.char, -charInfo.width / 2, -state.fontSize / 2);
+                    ctx.restore();
 
-                x += charWidth + 1;
-            }
-            y += lineHeight;
+                    x += charInfo.width + 1;
+                });
+                
+                y += effectiveLineHeight;
+            });
         });
     }
 
@@ -3605,6 +3690,9 @@
             fontSize: state.fontSize,
             inkColor: state.inkColor,
             wobble: state.wobble,
+            textAlign: state.textAlign,
+            textIndent: state.textIndent,
+            lineHeightMultiplier: state.lineHeightMultiplier,
             brushColor: state.brushColor,
             brushSize: state.brushSize,
             drawWobble: state.drawWobble,
@@ -3654,6 +3742,9 @@
                 state.fontSize = data.fontSize || 20;
                 state.inkColor = data.inkColor || '#3d3530';
                 state.wobble = data.wobble || 2;
+                state.textAlign = data.textAlign || 'left';
+                state.textIndent = data.textIndent !== undefined ? data.textIndent : true;
+                state.lineHeightMultiplier = data.lineHeightMultiplier || 1.0;
                 state.brushColor = data.brushColor || '#3d3530';
                 state.brushSize = data.brushSize || 3;
                 state.drawWobble = data.drawWobble || 1.5;
